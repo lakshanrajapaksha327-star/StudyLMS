@@ -1,0 +1,6 @@
+{
+  "name": "AI Study Assistant",
+  "description": "Production-ready AI Study Assistant with document upload & analysis, multi-source AI study chat, smart notes, flashcards, and practice quizzes powered by Gemini 3.6 Flash.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
