@@ -1,56 +1,24 @@
 import React, { useState } from 'react';
-import { Bell, Flame, Calendar, Layers, Sparkles, Check } from 'lucide-react';
+import { Bell, Flame, Calendar, Layers, Sparkles, Check, FileText, Trash2 } from 'lucide-react';
+import { NotificationItem } from '../types';
 
-interface NotificationItem {
-  id: string;
-  title: string;
-  message: string;
-  time: string;
-  type: 'reminder' | 'exam' | 'flashcard' | 'streak';
-  read: boolean;
+interface NotificationDropdownProps {
+  notifications?: NotificationItem[];
+  onMarkRead?: (id: string) => void;
+  onDeleteNotification?: (id: string) => void;
 }
 
-export const NotificationDropdown: React.FC = () => {
+export const NotificationDropdown: React.FC<NotificationDropdownProps> = ({
+  notifications = [],
+  onMarkRead,
+  onDeleteNotification,
+}) => {
   const [isOpen, setIsOpen] = useState(false);
-  const [notifications, setNotifications] = useState<NotificationItem[]>([
-    {
-      id: 'n1',
-      title: 'Flashcards Due Today',
-      message: '12 cards in "Computer Science" need review according to your SM-2 schedule.',
-      time: '10m ago',
-      type: 'flashcard',
-      read: false,
-    },
-    {
-      id: 'n2',
-      title: 'Upcoming Midterm Exam',
-      message: 'Calculus III Midterm scheduled in 3 days. Practice test recommended.',
-      time: '1h ago',
-      type: 'exam',
-      read: false,
-    },
-    {
-      id: 'n3',
-      title: 'Study Streak Preserved!',
-      message: 'You have maintained a 7-day study streak. Keep up active recall!',
-      time: 'Today',
-      type: 'streak',
-      read: false,
-    },
-    {
-      id: 'n4',
-      title: 'AI Weak Spot Recommendation',
-      message: 'Gemini detected lower score in Integration by Parts. AI review sheet created.',
-      time: 'Yesterday',
-      type: 'reminder',
-      read: true,
-    },
-  ]);
 
   const unreadCount = notifications.filter((n) => !n.read).length;
 
   const handleMarkAllAsRead = () => {
-    setNotifications((prev) => prev.map((n) => ({ ...n, read: true })));
+    notifications.filter((n) => !n.read).forEach((n) => onMarkRead?.(n.id));
   };
 
   const getTypeIcon = (type: string) => {
@@ -61,6 +29,8 @@ export const NotificationDropdown: React.FC = () => {
         return <Calendar className="w-4 h-4 text-purple-500" />;
       case 'streak':
         return <Flame className="w-4 h-4 text-orange-500" />;
+      case 'document':
+        return <FileText className="w-4 h-4 text-emerald-500" />;
       default:
         return <Sparkles className="w-4 h-4 text-indigo-500" />;
     }
@@ -75,7 +45,7 @@ export const NotificationDropdown: React.FC = () => {
       >
         <Bell className="w-4 h-4" />
         {unreadCount > 0 && (
-          <span className="absolute -top-1 -right-1 w-4 h-4 bg-red-500 text-white rounded-full text-[10px] font-bold flex items-center justify-center animate-pulse">
+          <span className="absolute -top-1 -right-1 w-4 h-4 bg-red-500 text-white rounded-full text-[10px] font-bold flex items-center justify-center">
             {unreadCount}
           </span>
         )}
@@ -98,30 +68,45 @@ export const NotificationDropdown: React.FC = () => {
           </div>
 
           <div className="space-y-2 max-h-64 overflow-y-auto">
-            {notifications.map((n) => (
-              <div
-                key={n.id}
-                onClick={() => {
-                  setNotifications((prev) =>
-                    prev.map((item) => (item.id === n.id ? { ...item, read: true } : item))
-                  );
-                }}
-                className={`p-2.5 rounded-xl border transition-all text-xs cursor-pointer space-y-1 ${
-                  n.read
-                    ? 'bg-slate-50/50 dark:bg-slate-800/30 border-slate-100 dark:border-slate-800/60 opacity-80'
-                    : 'bg-indigo-50/60 dark:bg-indigo-950/40 border-indigo-200 dark:border-indigo-800/50'
-                }`}
-              >
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-1.5 font-bold text-slate-900 dark:text-slate-100">
-                    {getTypeIcon(n.type)}
-                    <span>{n.title}</span>
+            {notifications.length === 0 ? (
+              <p className="text-center text-xs text-slate-400 py-6">No notifications yet.</p>
+            ) : (
+              notifications.map((n) => (
+                <div
+                  key={n.id}
+                  onClick={() => !n.read && onMarkRead?.(n.id)}
+                  className={`p-2.5 rounded-xl border transition-all text-xs cursor-pointer space-y-1 ${
+                    n.read
+                      ? 'bg-slate-50/50 dark:bg-slate-800/30 border-slate-100 dark:border-slate-800/60 opacity-80'
+                      : 'bg-indigo-50/60 dark:bg-indigo-950/40 border-indigo-200 dark:border-indigo-800/50'
+                  }`}
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-1.5 font-bold text-slate-900 dark:text-slate-100 min-w-0">
+                      {getTypeIcon(n.type)}
+                      <span className="truncate">{n.title}</span>
+                    </div>
+                    <div className="flex items-center gap-1 shrink-0">
+                      <span className="text-[10px] text-slate-400">
+                        {n.createdAt ? new Date(n.createdAt).toLocaleDateString() : 'Now'}
+                      </span>
+                      {onDeleteNotification && (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onDeleteNotification(n.id);
+                          }}
+                          className="p-0.5 text-slate-400 hover:text-rose-500"
+                        >
+                          <Trash2 className="w-3 h-3" />
+                        </button>
+                      )}
+                    </div>
                   </div>
-                  <span className="text-[10px] text-slate-400">{n.time}</span>
+                  <p className="text-[11px] text-slate-600 dark:text-slate-300 leading-snug">{n.message}</p>
                 </div>
-                <p className="text-[11px] text-slate-600 dark:text-slate-300 leading-snug">{n.message}</p>
-              </div>
-            ))}
+              ))
+            )}
           </div>
         </div>
       )}

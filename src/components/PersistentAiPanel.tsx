@@ -92,11 +92,11 @@ export const PersistentAiPanel: React.FC<PersistentAiPanelProps> = ({
       const aiReply = res.explanation.replace(/#/g, '').slice(0, 300);
       setVoiceMessages((prev) => [...prev, { sender: 'ai', text: aiReply }]);
 
-      // Generate Audio Speech
+      // Generate Audio Speech (WAV)
       try {
         const audioBase64 = await generateSpeechAudio(aiReply);
         if (audioBase64) {
-          const audio = new Audio(`data:audio/mp3;base64,${audioBase64}`);
+          const audio = new Audio(`data:audio/wav;base64,${audioBase64}`);
           setIsPlayingAudio(true);
           audio.onended = () => setIsPlayingAudio(false);
           audio.play();
@@ -104,8 +104,11 @@ export const PersistentAiPanel: React.FC<PersistentAiPanelProps> = ({
       } catch (err) {
         console.error('Audio playback error', err);
       }
-    } catch (err) {
-      setVoiceMessages((prev) => [...prev, { sender: 'ai', text: 'Sorry, I could not process your voice request.' }]);
+    } catch (err: any) {
+      setVoiceMessages((prev) => [
+        ...prev,
+        { sender: 'ai', text: err?.message || 'Sorry, I could not process your voice request.' },
+      ]);
     } finally {
       setLoading(false);
     }
@@ -114,7 +117,16 @@ export const PersistentAiPanel: React.FC<PersistentAiPanelProps> = ({
   const handleQuickAction = async (actionType: 'summarize' | 'explain' | 'flashcards' | 'quiz') => {
     setLoading(true);
     setAiOutput(null);
-    const contentToUse = inputText.trim() || sourceContent || `Calculus limit rules for ${activeNotebookTitle}`;
+    const contentToUse = inputText.trim() || sourceContent;
+    if (!contentToUse) {
+      setAiOutput({
+        type: 'summary',
+        title: 'No Input Provided',
+        text: 'Please paste an excerpt above or upload a study document in your active notebook first.',
+      });
+      setLoading(false);
+      return;
+    }
 
     try {
       if (actionType === 'summarize') {
@@ -130,8 +142,8 @@ export const PersistentAiPanel: React.FC<PersistentAiPanelProps> = ({
         const questions = await generateAIQuiz('Quick Test', contentToUse, 3);
         setAiOutput({ type: 'quiz', title: `3 Practice Questions`, questions });
       }
-    } catch (err) {
-      console.error(err);
+    } catch (err: any) {
+      setAiOutput({ type: 'summary', title: 'Error', text: err?.message || 'Action failed.' });
     } finally {
       setLoading(false);
     }
@@ -143,8 +155,8 @@ export const PersistentAiPanel: React.FC<PersistentAiPanelProps> = ({
       const topic = inputText.trim() || activeNotebookTitle || 'Core Study Concepts';
       const deck = await generatePowerPointSlides(topic, sourceContent, 4);
       setAiOutput({ type: 'slides', deck });
-    } catch (err) {
-      console.error(err);
+    } catch (err: any) {
+      setAiOutput({ type: 'summary', title: 'Error', text: err?.message || 'Slide generation failed.' });
     } finally {
       setLoading(false);
     }
@@ -156,8 +168,8 @@ export const PersistentAiPanel: React.FC<PersistentAiPanelProps> = ({
       const topic = inputText.trim() || activeNotebookTitle || 'Concept Hierarchy';
       const diagram = await generateDiagram(topic, 'flowchart');
       setAiOutput({ type: 'diagram', diagram });
-    } catch (err) {
-      console.error(err);
+    } catch (err: any) {
+      setAiOutput({ type: 'summary', title: 'Error', text: err?.message || 'Diagram generation failed.' });
     } finally {
       setLoading(false);
     }

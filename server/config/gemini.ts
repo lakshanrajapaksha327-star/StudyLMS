@@ -1,21 +1,9 @@
-import { GoogleGenAI } from '@google/genai';
+import { aiManagerService } from '../ai/ai-manager.service';
 
 /**
- * Lazy Gemini AI Client Helper
- * Ensures server starts safely even if API key is supplied at runtime
+ * Legacy export retained only so callers route through the centralized AiManagerService.
+ * Direct unguarded SDK initialization is disallowed outside server/ai/providers/*.
  */
-export function getGeminiClient(): GoogleGenAI {
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) {
-    throw new Error('GEMINI_API_KEY environment variable is not configured.');
-  }
-
-  return new GoogleGenAI({
-    apiKey,
-    httpOptions: {
-      headers: {
-        'User-Agent': 'aistudio-build',
-      },
-    },
-  });
+export function getAiManager() {
+  return aiManagerService;
 }

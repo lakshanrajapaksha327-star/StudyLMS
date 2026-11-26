@@ -1,76 +1,191 @@
-import { Request, Response } from 'express';
-import path from 'path';
+import { Request, Response, NextFunction } from 'express';
+import { ApiError, isValidResourceId } from '../middleware/validate.middleware';
+import { getAuthContext } from '../repositories/base.repository';
 import { documentService } from '../services/document.service';
+import { ragService } from '../services/rag.service';
 
 export class DocumentController {
-  public async uploadAndSummarize(req: Request, res: Response) {
+  public async uploadAndSummarize(req: Request, res: Response, next: NextFunction) {
     try {
-      let textContent = req.body.pastedText || '';
-      let docTitle = req.body.title || 'Uploaded Document';
-      let docType: 'pdf' | 'text' | 'markdown' | 'pasted' = 'text';
+      const auth = getAuthContext(req);
+      const customTitle = typeof req.body.title === 'string' ? req.body.title.trim() : undefined;
+      const notebookId = typeof req.body.notebookId === 'string' ? req.body.notebookId.trim() : undefined;
+      const pastedText = typeof req.body.pastedText === 'string' ? req.body.pastedText : '';
 
       if (req.file) {
-        docTitle = req.file.originalname;
-        const fileExt = path.extname(req.file.originalname).toLowerCase();
-        if (fileExt === '.md') docType = 'markdown';
-        else if (fileExt === '.pdf') docType = 'pdf';
-        else docType = 'text';
-
-        textContent = req.file.buffer.toString('utf-8');
-      } else if (req.body.pastedText) {
-        docType = 'pasted';
+        const result = await documentService.uploadAndProcessFile(
+          req.file,
+          customTitle,
+          notebookId,
+          auth
+        );
+        return res.json({
+          success: true,
+          document: result.document,
+          flashcards: result.flashcards,
+        });
       }
 
-      if (!textContent.trim()) {
-        return res.status(400).json({ error: 'No document content or text provided.' });
+      if (pastedText.trim()) {
+        const result = await documentService.processPastedDocument(
+          customTitle || 'Pasted Study Text',
+          pastedText,
+          notebookId,
+          auth
+        );
+        return res.json({
+          success: true,
+          document: result.document,
+          flashcards: result.flashcards,
+        });
       }
 
-      const result = await documentService.processAndSaveDocument(
-        docTitle,
-        textContent,
-        docType,
-        req.body.notebookId
-      );
-
-      res.json({
-        success: true,
-        document: result.document,
-        flashcards: result.flashcards,
-      });
-    } catch (error: any) {
-      console.error('DocumentController Error:', error);
-      res.status(500).json({
-        error: 'Failed to upload and summarize document with Gemini',
-        details: error?.message || String(error),
-      });
+      throw new ApiError(400, 'Please attach a supported file or provide study text.', 'NO_INPUT');
+    } catch (err) {
+      next(err);
     }
   }
 
-  public async getAll(req: Request, res: Response) {
+  public async getAll(req: Request, res: Response, next: NextFunction) {
     try {
-      const documents = await documentService.getAllDocuments();
-      res.json({ success: true, documents });
-    } catch (error: any) {
-      res.status(500).json({ error: 'Failed to retrieve documents.' });
+      const auth = getAuthContext(req);
+      const notebookId = typeof req.query.notebookId === 'string' ? req.query.notebookId : undefined;
+      const q = typeof req.query.search === 'string' ? req.query.search.trim().toLowerCase() : '';
+      const page = Math.max(1, Number(req.query.page) || 1);
+      const limit = Math.min(200, Math.max(1, Number(req.query.limit) || 100));
+
+      let documents = await documentService.getAllDocuments(auth, notebookId);
+      if (q) {
+        documents = documents.filter(
+          (d) =>
+            d.title.toLowerCase().includes(q) ||
+            (d.summary || '').toLowerCase().includes(q) ||
+            (d.keyConcepts || []).some((k) => k.toLowerCase().includes(q))
+        );
+      }
+
+      const total = documents.length;
+      const sliced = documents.slice((page - 1) * limit, page * limit);
+      res.json({ success: true, documents: sliced, total, page, limit });
+    } catch (err) {
+      next(err);
     }
   }
 
-  public async getById(req: Request, res: Response) {
+  public async getById(req: Request, res: Response, next: NextFunction) {
     try {
-      const doc = await documentService.getDocument(req.params.id);
-      if (!doc) return res.status(404).json({ error: 'Document not found.' });
+      const auth = getAuthContext(req);
+      if (!isValidResourceId(req.params.id)) throw new ApiError(400, 'Invalid document ID.');
+      const doc = await documentService.getDocument(req.params.id, auth);
+      if (!doc) throw new ApiError(404, 'Document not found.', 'NOT_FOUND');
       res.json({ success: true, document: doc });
-    } catch (error: any) {
-      res.status(500).json({ error: 'Failed to retrieve document.' });
+    } catch (err) {
+      next(err);
     }
   }
 
-  public async delete(req: Request, res: Response) {
+  public async getFullContent(req: Request, res: Response, next: NextFunction) {
     try {
-      const success = await documentService.deleteDocument(req.params.id);
-      res.json({ success });
-    } catch (error: any) {
-      res.status(500).json({ error: 'Failed to delete document.' });
+      const auth = getAuthContext(req);
+      if (!isValidResourceId(req.params.id)) throw new ApiError(400, 'Invalid document ID.');
+      const result = await documentService.getFullDocumentContent(req.params.id, auth);
+      res.json({ success: true, ...result });
+    } catch (err) {
+      next(err);
+    }
+  }
+
+  public async searchInside(req: Request, res: Response, next: NextFunction) {
+    try {
+      const auth = getAuthContext(req);
+      if (!isValidResourceId(req.params.id)) throw new ApiError(400, 'Invalid document ID.');
+      const q = typeof req.query.q === 'string' ? req.query.q : '';
+      const matches = await documentService.searchInsideDocument(req.params.id, q, auth);
+      res.json({ success: true, matches });
+    } catch (err) {
+      next(err);
+    }
+  }
+
+  public async downloadOriginal(req: Request, res: Response, next: NextFunction) {
+    try {
+      const auth = getAuthContext(req);
+      if (!isValidResourceId(req.params.id)) throw new ApiError(400, 'Invalid document ID.');
+      const file = await documentService.downloadOriginalDocument(req.params.id, auth);
+      const safeName = file.filename.replace(/["\r\n]/g, '_');
+      res.setHeader('Content-Type', file.mimeType);
+      res.setHeader('Content-Disposition', `attachment; filename="${safeName}"`);
+      res.send(file.buffer);
+    } catch (err) {
+      next(err);
+    }
+  }
+
+  public async rename(req: Request, res: Response, next: NextFunction) {
+    try {
+      const auth = getAuthContext(req);
+      if (!isValidResourceId(req.params.id)) throw new ApiError(400, 'Invalid document ID.');
+      const title = typeof req.body.title === 'string' ? req.body.title.trim() : '';
+      if (!title) throw new ApiError(400, 'Title is required.');
+      const updated = await documentService.renameDocument(req.params.id, title, auth);
+      res.json({ success: true, document: updated });
+    } catch (err) {
+      next(err);
+    }
+  }
+
+  public async replaceFile(req: Request, res: Response, next: NextFunction) {
+    try {
+      const auth = getAuthContext(req);
+      if (!isValidResourceId(req.params.id)) throw new ApiError(400, 'Invalid document ID.');
+      if (!req.file) throw new ApiError(400, 'Replacement file is required.');
+      const result = await documentService.replaceDocumentFile(req.params.id, req.file, auth);
+      res.json({ success: true, document: result.document, flashcards: result.flashcards });
+    } catch (err) {
+      next(err);
+    }
+  }
+
+  public async reindex(req: Request, res: Response, next: NextFunction) {
+    try {
+      const auth = getAuthContext(req);
+      if (!isValidResourceId(req.params.id)) throw new ApiError(400, 'Invalid document ID.');
+      const result = await documentService.reindexDocument(req.params.id, auth);
+      res.json({ success: true, document: result.document, flashcards: result.flashcards });
+    } catch (err) {
+      next(err);
+    }
+  }
+
+  public async delete(req: Request, res: Response, next: NextFunction) {
+    try {
+      const auth = getAuthContext(req);
+      if (!isValidResourceId(req.params.id)) throw new ApiError(400, 'Invalid document ID.');
+      const success = await documentService.deleteDocument(req.params.id, auth);
+      if (!success) throw new ApiError(404, 'Document not found.', 'NOT_FOUND');
+      res.json({ success: true });
+    } catch (err) {
+      next(err);
+    }
+  }
+
+  public async retrieveRag(req: Request, res: Response, next: NextFunction) {
+    try {
+      const auth = getAuthContext(req);
+      const { query, notebookId, selectedDocumentIds, topK } = req.body || {};
+      if (!query || typeof query !== 'string' || !query.trim()) {
+        throw new ApiError(400, 'Search query is required.');
+      }
+      const result = await ragService.retrieveContext({
+        query: query.trim(),
+        auth,
+        notebookId,
+        selectedDocumentIds,
+        topK: Number(topK) || 8,
+      });
+      res.json({ success: true, ...result });
+    } catch (err) {
+      next(err);
     }
   }
 }

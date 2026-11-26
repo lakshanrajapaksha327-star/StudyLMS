@@ -29,6 +29,16 @@ export const BreadcrumbNav: React.FC<BreadcrumbNavProps> = ({ activeTab, noteboo
         return 'Executive Summary';
       case 'toolkit':
         return 'STEM & AI Toolkit';
+      case 'adaptive':
+        return 'Adaptive Tutor & Revision';
+      case 'examprep':
+        return 'Smart Exam Prep';
+      case 'visuals':
+        return 'Visual Learning Studio';
+      case 'audio':
+        return 'Audio Lecture Assistant';
+      case 'analytics':
+        return 'Learning Analytics';
       case 'history':
         return 'Activity History Logs';
       case 'settings':

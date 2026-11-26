@@ -20,15 +20,19 @@ export interface StudyDaySchedule {
 
 export interface StudyPlanModel {
   id: string;
+  userId?: string;
   title: string;
   subjects: string[];
+  weakTopics?: string[];
+  strongTopics?: string[];
+  preferredStudyTime?: string;
   examDate: string;
   hoursPerDay: number;
-  daysRemaining: number;
+  daysRemaining?: number;
   schedule: StudyDaySchedule[];
   prioritizedTopics: string[];
   adaptiveTips: string[];
-  overallProgress: number; // percentage
+  overallProgress: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -38,6 +42,9 @@ export interface GenerateStudyPlanRequest {
   examDate: string;
   hoursPerDay: number;
   focusAreas?: string;
+  weakTopics?: string[];
+  strongTopics?: string[];
+  preferredStudyTime?: string;
   studyDaysPerWeek?: number;
 }
 

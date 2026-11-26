@@ -4,15 +4,24 @@ export interface FlashcardItemModel {
   answer: string;
   hint?: string;
   status?: 'unstudied' | 'learning' | 'mastered';
+  box?: number;
+  easeFactor?: number;
+  intervalDays?: number;
+  repetitions?: number;
+  nextReviewDate?: string;
+  starred?: boolean;
+  difficult?: boolean;
 }
 
 export interface FlashcardSetModel {
   id: string;
-  notebookId?: string;
+  userId?: string;
+  notebookId: string;
   title: string;
   description: string;
   cards: FlashcardItemModel[];
   createdAt: string;
+  updatedAt?: string;
   category: string;
 }
 
@@ -21,4 +30,5 @@ export interface GenerateFlashcardsRequest {
   sourceContent?: string;
   cardCount?: number;
   notebookId?: string;
+  selectedDocumentIds?: string[];
 }

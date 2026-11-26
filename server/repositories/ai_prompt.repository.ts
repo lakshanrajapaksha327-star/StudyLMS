@@ -1,37 +1,77 @@
+import { firestoreRest } from '../config/firestore_rest';
 import { AiPromptLogModel } from '../models/ai_prompt.model';
+import { AuthContext, makeSafeId, pickAllowedKeys } from './base.repository';
 
-class AiPromptRepository {
-  private logs: AiPromptLogModel[] = [];
+const AI_LOG_KEYS = [
+  'id',
+  'userId',
+  'feature',
+  'provider',
+  'prompt',
+  'response',
+  'latencyMs',
+  'inputTokens',
+  'outputTokens',
+  'costUsd',
+  'tokensConsumed',
+  'modelName',
+  'status',
+  'errorCategory',
+  'cached',
+  'fallbackUsed',
+  'createdAt',
+] as const;
 
-  public async logPrompt(data: Omit<AiPromptLogModel, 'id' | 'createdAt'>): Promise<AiPromptLogModel> {
-    const log: AiPromptLogModel = {
-      ...data,
-      id: `ai-log-${Date.now()}-${Math.random().toString(36).substring(7)}`,
+export class AiPromptRepository {
+  public async logPrompt(
+    entry: Omit<AiPromptLogModel, 'id' | 'createdAt'>,
+    auth: AuthContext
+  ): Promise<AiPromptLogModel> {
+    const log: Record<string, any> = {
+      ...entry,
+      userId: auth.userId,
+      id: makeSafeId('ailog'),
+      prompt: (entry.prompt || '').slice(0, 1900),
+      response: (entry.response || '').slice(0, 1900),
       createdAt: new Date().toISOString(),
     };
-    this.logs.unshift(log); // Most recent first
-    return log;
+    if (log.inputTokens === null || log.inputTokens === undefined) delete log.inputTokens;
+    if (log.outputTokens === null || log.outputTokens === undefined) delete log.outputTokens;
+    if (!log.errorCategory) delete log.errorCategory;
+
+    const clean = pickAllowedKeys(log, AI_LOG_KEYS) as AiPromptLogModel;
+    return firestoreRest.setDoc('ai_usage_logs', clean.id, clean, auth.idToken);
   }
 
-  public async getLogsByUserId(userId: string, limit = 50): Promise<AiPromptLogModel[]> {
-    return this.logs.filter((l) => l.userId === userId || !l.userId).slice(0, limit);
+  public async getLogsByUserId(auth: AuthContext): Promise<AiPromptLogModel[]> {
+    const logs = await firestoreRest.listByUser<AiPromptLogModel>(
+      'ai_usage_logs',
+      auth.userId,
+      auth.idToken
+    );
+    return logs.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
   }
 
-  public async getStats(): Promise<{
-    totalPrompts: number;
-    totalTokens: number;
-    totalCostUsd: number;
-    avgLatencyMs: number;
-  }> {
-    const totalPrompts = this.logs.length;
-    const totalTokens = this.logs.reduce((sum, l) => sum + (l.tokensConsumed || 0), 0);
-    const totalCostUsd = this.logs.reduce((sum, l) => sum + (l.costUsd || 0), 0);
-    const avgLatencyMs =
-      totalPrompts > 0
-        ? Math.round(this.logs.reduce((sum, l) => sum + (l.latencyMs || 0), 0) / totalPrompts)
+  public async getAllLogsAdmin(auth: AuthContext): Promise<AiPromptLogModel[]> {
+    const logs = await firestoreRest.listAllAdmin<AiPromptLogModel>('ai_usage_logs', auth.idToken);
+    return logs.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+  }
+
+  public async getStats(auth: AuthContext) {
+    const logs = await this.getLogsByUserId(auth);
+    const totalTokens = logs.reduce((acc, l) => acc + (l.tokensConsumed || 0), 0);
+    const totalCost = logs.reduce((acc, l) => acc + (l.costUsd || 0), 0);
+    const avgLatency =
+      logs.length > 0
+        ? Math.round(logs.reduce((acc, l) => acc + (l.latencyMs || 0), 0) / logs.length)
         : 0;
 
-    return { totalPrompts, totalTokens, totalCostUsd, avgLatencyMs };
+    return {
+      totalRequests: logs.length,
+      totalTokens,
+      totalCostUsd: Number(totalCost.toFixed(6)),
+      avgLatencyMs: avgLatency,
+    };
   }
 }
 

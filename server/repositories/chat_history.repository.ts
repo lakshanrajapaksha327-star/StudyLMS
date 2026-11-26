@@ -1,67 +1,117 @@
-import { ChatSessionModel, ChatMessageModel } from '../models/chat.model';
+import { firestoreRest } from '../config/firestore_rest';
+import { ChatMessageModel, ChatSessionModel } from '../models/chat.model';
+import { AuthContext, pickAllowedKeys } from './base.repository';
 
-class ChatHistoryRepository {
-  private sessions: Map<string, ChatSessionModel> = new Map();
+const CHAT_SESSION_KEYS = [
+  'id',
+  'userId',
+  'notebookId',
+  'title',
+  'persona',
+  'isArchived',
+  'messages',
+  'createdAt',
+  'updatedAt',
+] as const;
 
-  public async saveSession(session: ChatSessionModel): Promise<ChatSessionModel> {
-    this.sessions.set(session.id, session);
+export class ChatHistoryRepository {
+  public async saveSession(session: ChatSessionModel, auth: AuthContext): Promise<ChatSessionModel> {
+    const now = new Date().toISOString();
+    const payload: ChatSessionModel = {
+      ...session,
+      userId: auth.userId,
+      isArchived: Boolean(session.isArchived),
+      messages: (session.messages || []).slice(-250),
+      createdAt: session.createdAt || now,
+      updatedAt: now,
+    };
+    const clean = pickAllowedKeys(payload, CHAT_SESSION_KEYS) as ChatSessionModel;
+    return firestoreRest.setDoc('chat_sessions', clean.id, clean, auth.idToken);
+  }
+
+  public async getSession(id: string, auth: AuthContext): Promise<ChatSessionModel | undefined> {
+    const session = await firestoreRest.getDoc<ChatSessionModel>('chat_sessions', id, auth.idToken);
+    if (!session || session.userId !== auth.userId) return undefined;
     return session;
   }
 
-  public async getSession(id: string): Promise<ChatSessionModel | undefined> {
-    return this.sessions.get(id);
+  public async getAllSessions(auth: AuthContext): Promise<ChatSessionModel[]> {
+    const list = await firestoreRest.listByUser<ChatSessionModel>(
+      'chat_sessions',
+      auth.userId,
+      auth.idToken
+    );
+    return list.sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''));
   }
 
-  public async getAllSessions(includeArchived = false): Promise<ChatSessionModel[]> {
-    return Array.from(this.sessions.values())
-      .filter((s) => includeArchived || !s.isArchived)
-      .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+  public async searchSessions(query: string, auth: AuthContext): Promise<ChatSessionModel[]> {
+    const all = await this.getAllSessions(auth);
+    const q = query.trim().toLowerCase();
+    if (!q) return all;
+    return all.filter(
+      (s) =>
+        (s.title || '').toLowerCase().includes(q) ||
+        (s.messages || []).some((m) => (m.text || '').toLowerCase().includes(q))
+    );
   }
 
-  public async searchSessions(query: string): Promise<ChatSessionModel[]> {
-    const q = query.toLowerCase();
-    return Array.from(this.sessions.values()).filter((session) => {
-      if (session.title.toLowerCase().includes(q)) return true;
-      return session.messages.some((m) => m.text.toLowerCase().includes(q));
-    });
+  public async renameSession(
+    id: string,
+    title: string,
+    auth: AuthContext
+  ): Promise<ChatSessionModel | undefined> {
+    const existing = await this.getSession(id, auth);
+    if (!existing) return undefined;
+    return firestoreRest.patchDoc<ChatSessionModel>(
+      'chat_sessions',
+      id,
+      { title: title.slice(0, 290), updatedAt: new Date().toISOString() },
+      auth.idToken
+    );
   }
 
-  public async renameSession(id: string, title: string): Promise<ChatSessionModel | undefined> {
-    const session = this.sessions.get(id);
+  public async archiveSession(
+    id: string,
+    isArchived: boolean,
+    auth: AuthContext
+  ): Promise<ChatSessionModel | undefined> {
+    const existing = await this.getSession(id, auth);
+    if (!existing) return undefined;
+    return firestoreRest.patchDoc<ChatSessionModel>(
+      'chat_sessions',
+      id,
+      { isArchived, updatedAt: new Date().toISOString() },
+      auth.idToken
+    );
+  }
+
+  public async addMessage(
+    sessionId: string,
+    message: ChatMessageModel,
+    auth: AuthContext
+  ): Promise<ChatSessionModel | undefined> {
+    const session = await this.getSession(sessionId, auth);
     if (!session) return undefined;
-
-    session.title = title;
-    session.updatedAt = new Date().toISOString();
-    this.sessions.set(id, session);
-    return session;
+    const messages = [...(session.messages || []), message].slice(-250);
+    return firestoreRest.patchDoc<ChatSessionModel>(
+      'chat_sessions',
+      sessionId,
+      { messages, updatedAt: new Date().toISOString() },
+      auth.idToken
+    );
   }
 
-  public async archiveSession(id: string, isArchived = true): Promise<ChatSessionModel | undefined> {
-    const session = this.sessions.get(id);
-    if (!session) return undefined;
-
-    session.isArchived = isArchived;
-    session.updatedAt = new Date().toISOString();
-    this.sessions.set(id, session);
-    return session;
+  public async deleteSession(id: string, auth: AuthContext): Promise<boolean> {
+    const existing = await this.getSession(id, auth);
+    if (!existing) return false;
+    return firestoreRest.deleteDoc('chat_sessions', id, auth.idToken);
   }
 
-  public async addMessage(sessionId: string, message: ChatMessageModel): Promise<ChatSessionModel | undefined> {
-    const session = this.sessions.get(sessionId);
-    if (!session) return undefined;
-
-    session.messages.push(message);
-    session.updatedAt = new Date().toISOString();
-    this.sessions.set(sessionId, session);
-    return session;
-  }
-
-  public async deleteSession(id: string): Promise<boolean> {
-    return this.sessions.delete(id);
-  }
-
-  public async clearAll(): Promise<void> {
-    this.sessions.clear();
+  public async clearAll(auth: AuthContext): Promise<void> {
+    const sessions = await this.getAllSessions(auth);
+    for (const s of sessions) {
+      await firestoreRest.deleteDoc('chat_sessions', s.id, auth.idToken).catch(() => {});
+    }
   }
 }
 

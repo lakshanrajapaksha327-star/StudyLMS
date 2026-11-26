@@ -1,51 +1,86 @@
-import { Request, Response } from 'express';
-import { getGeminiClient } from '../config/gemini';
+import { Request, Response, NextFunction } from 'express';
+import { aiManagerService } from '../ai/ai-manager.service';
+import { ApiError } from '../middleware/validate.middleware';
+import { getAuthContext } from '../repositories/base.repository';
 
 export class NotionAiController {
-  public async processNoteAction(req: Request, res: Response) {
+  public async processNoteAction(req: Request, res: Response, next: NextFunction) {
     try {
+      const auth = getAuthContext(req);
       const { action, noteContent, noteTitle } = req.body;
-      if (!noteContent) {
-        return res.status(400).json({ error: 'Note content is required.' });
+      if (!noteContent || !String(noteContent).trim()) {
+        throw new ApiError(400, 'Note content is required.');
       }
 
-      const ai = getGeminiClient();
+      const actionMap: Record<string, { prompt: string; taskType: 'simple_text' | 'complex_reasoning' }> = {
+        improve: {
+          prompt:
+            'Improve clarity, structure, flow, and academic rigor while preserving all factual meaning.',
+          taskType: 'complex_reasoning',
+        },
+        explain: {
+          prompt:
+            'Explain the concepts inside this study note clearly with intuitive intuition, examples, and key takeaways.',
+          taskType: 'complex_reasoning',
+        },
+        summarize: {
+          prompt:
+            'Create an executive summary and key bullet takeaways for this note.',
+          taskType: 'simple_text',
+        },
+        simplify: {
+          prompt:
+            'Rewrite and simplify this note into plain, beginner-friendly language with everyday analogies without omitting core ideas.',
+          taskType: 'simple_text',
+        },
+        expand: {
+          prompt:
+            'Expand on this note with deeper academic explanations, worked examples, and key context.',
+          taskType: 'complex_reasoning',
+        },
+        examples: {
+          prompt:
+            'Add concrete real-world and exam-relevant worked examples illustrating each major concept in this note.',
+          taskType: 'complex_reasoning',
+        },
+        'extract-key-terms': {
+          prompt:
+            'Extract key definitions, formulas, and technical terms into a clear formatted glossary.',
+          taskType: 'simple_text',
+        },
+        'fix-grammar': {
+          prompt:
+            'Fix grammar, spelling, punctuation, and Markdown formatting cleanly without altering technical meaning.',
+          taskType: 'simple_text',
+        },
+      };
 
-      let actionPrompt = '';
-      switch (action) {
-        case 'summarize':
-          actionPrompt = 'Create an executive summary and key keypoints for this note.';
-          break;
-        case 'expand':
-          actionPrompt = 'Expand on this note by adding detailed explanations, examples, and context.';
-          break;
-        case 'extract-key-terms':
-          actionPrompt = 'Extract all key definitions, formulas, and terminology into a formatted study list.';
-          break;
-        case 'fix-grammar':
-          actionPrompt = 'Improve clarity, fix grammar, and format nicely into standard markdown.';
-          break;
-        default:
-          actionPrompt = 'Enhance and structure this study note for clear review.';
-      }
+      const selected = actionMap[String(action || 'improve')] || actionMap.improve;
 
-      const prompt = `You are Notion AI for Study Notes.
+      const prompt = `You are a Notion-style AI Writing & Study Assistant.
 Note Title: "${noteTitle || 'Untitled Note'}"
 Note Content:
-${noteContent}
+${String(noteContent).slice(0, 24000)}
 
-Task: ${actionPrompt}
-Output the refined/expanded note in clear Markdown format.`;
+Task: ${selected.prompt}
+Output clean, well-structured Markdown.`;
 
-      const response = await ai.models.generateContent({
-        model: 'gemini-3.6-flash',
+      const managed = await aiManagerService.generate({
+        taskType: selected.taskType,
+        feature: 'notion_ai',
+        promptSummary: `Note AI (${action || 'improve'}): ${noteTitle || 'Untitled'}`,
+        auth,
         contents: prompt,
       });
 
-      res.json({ result: response.text || '' });
-    } catch (error: any) {
-      console.error('Notion AI Error:', error);
-      res.status(500).json({ error: 'Failed to process note action with Gemini.' });
+      res.json({
+        success: true,
+        result: managed.text || '',
+        provider: managed.provider,
+        model: managed.model,
+      });
+    } catch (err) {
+      next(err);
     }
   }
 }

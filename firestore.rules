@@ -1,0 +1,870 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global Safety Net (Default Deny)
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // -------------------------------------------------------------------------
+    // Core Primitives
+    // -------------------------------------------------------------------------
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isOwnerId(uid) {
+      return isSignedIn() && request.auth.uid == uid;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && (
+        (request.auth.token.email == 'lakshanrajapaksha327@gmail.com' &&
+         request.auth.token.email_verified == true) ||
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+      );
+    }
+
+    function isNonEmptyStr(val, maxLen) {
+      return val is string && val.size() >= 1 && val.size() <= maxLen;
+    }
+
+    function isOptStr(data, key, maxLen) {
+      return !(key in data) || (data[key] is string && data[key].size() <= maxLen);
+    }
+
+    function isOptNum(data, key) {
+      return !(key in data) || data[key] is number;
+    }
+
+    function isOptBool(data, key) {
+      return !(key in data) || data[key] is bool;
+    }
+
+    function isOptList(data, key, maxItems) {
+      return !(key in data) || (data[key] is list && data[key].size() <= maxItems);
+    }
+
+    // -------------------------------------------------------------------------
+    // Entity Validation Blueprints
+    // -------------------------------------------------------------------------
+    function isValidUserProfile(data, uid) {
+      return data.uid == uid
+        && isValidId(data.uid)
+        && isNonEmptyStr(data.email, 320)
+        && isNonEmptyStr(data.name, 120)
+        && data.role in ['Student', 'Educator', 'Admin']
+        && isOptStr(data, 'avatar', 2048)
+        && isOptNum(data, 'studyGoalMinutes')
+        && isOptNum(data, 'streakDays')
+        && isOptNum(data, 'cardsMastered')
+        && isOptNum(data, 'quizzesCompleted')
+        && isOptNum(data, 'timeSpentMinutes')
+        && (!('status' in data) || data.status in ['Active', 'Suspended'])
+        && isNonEmptyStr(data.createdAt, 64)
+        && isNonEmptyStr(data.updatedAt, 64);
+    }
+
+    function isValidUserPreferences(data, uid) {
+      return data.userId == uid
+        && isValidId(data.userId)
+        && data.theme in ['light', 'dark', 'system']
+        && isNonEmptyStr(data.aiModelPreference, 100)
+        && isOptNum(data, 'defaultCardCount')
+        && isOptBool(data, 'socraticTutorMode')
+        && isOptBool(data, 'autoSummarize')
+        && isOptStr(data, 'language', 30)
+        && (!('fontSize' in data) || data.fontSize in ['small', 'medium', 'large'])
+        && isOptBool(data, 'notificationsEnabled')
+        && isOptBool(data, 'privacyMode')
+        && isOptStr(data, 'defaultPersona', 64)
+        && isOptBool(data, 'onboardingDismissed')
+        && isNonEmptyStr(data.updatedAt, 64);
+    }
+
+    function isValidNotebook(data, docId) {
+      return data.id == docId
+        && data.userId == request.auth.uid
+        && isValidId(data.userId)
+        && isNonEmptyStr(data.title, 200)
+        && isOptStr(data, 'description', 2000)
+        && isOptStr(data, 'color', 80)
+        && isNonEmptyStr(data.createdAt, 64)
+        && isNonEmptyStr(data.updatedAt, 64);
+    }
+
+    function isValidDocument(data, docId) {
+      return data.id == docId
+        && data.userId == request.auth.uid
+        && isValidId(data.userId)
+        && isValidId(data.notebookId)
+        && isNonEmptyStr(data.title, 300)
+        && isNonEmptyStr(data.type, 32)
+        && data.processingStatus in ['uploaded', 'validating', 'extracting', 'ocr_processing', 'chunking', 'embedding', 'indexing', 'ready', 'partially_processed', 'failed']
+        && data.content is string && data.content.size() <= 700000
+        && isOptStr(data, 'originalFilename', 300)
+        && isOptStr(data, 'mimeType', 128)
+        && isOptNum(data, 'fileSizeBytes')
+        && isOptStr(data, 'fileSize', 40)
+        && isOptStr(data, 'storageRef', 256)
+        && isOptNum(data, 'blobChunkCount')
+        && isOptNum(data, 'progressPercent')
+        && isOptNum(data, 'chunkCount')
+        && isOptNum(data, 'pageCount')
+        && isOptStr(data, 'embeddingModel', 80)
+        && isOptStr(data, 'ocrWarnings', 2000)
+        && isOptStr(data, 'errorMessage', 1000)
+        && isOptStr(data, 'summary', 20000)
+        && isOptList(data, 'keyConcepts', 50)
+        && isNonEmptyStr(data.addedAt, 64)
+        && isOptStr(data, 'updatedAt', 64);
+    }
+
+    function isValidChunk(data, docId) {
+      return data.id == docId
+        && data.userId == request.auth.uid
+        && isValidId(data.userId)
+        && isValidId(data.notebookId)
+        && isValidId(data.documentId)
+        && data.chunkIndex is number
+        && isNonEmptyStr(data.content, 20000)
+        && isOptStr(data, 'contentHash', 128)
+        && isOptNum(data, 'pageNumber')
+        && isOptNum(data, 'slideNumber')
+        && isOptStr(data, 'sectionHeading', 300)
+        && isOptStr(data, 'sourceTitle', 300)
+        && isOptNum(data, 'tokenCount')
+        && isOptList(data, 'embedding', 3072)
+        && isOptStr(data, 'embeddingModel', 80)
+        && isNonEmptyStr(data.createdAt, 64);
+    }
+
+    function isValidBlob(data, docId) {
+      return data.id == docId
+        && data.userId == request.auth.uid
+        && isValidId(data.userId)
+        && isValidId(data.documentId)
+        && data.chunkIndex is number
+        && data.totalChunks is number
+        && isOptStr(data, 'mimeType', 128)
+        && isOptStr(data, 'originalFilename', 300)
+        && data.dataBase64 is string && data.dataBase64.size() <= 850000
+        && isNonEmptyStr(data.createdAt, 64);
+    }
+
+    function isValidNote(data, docId) {
+      return data.id == docId
+        && data.userId == request.auth.uid
+        && isValidId(data.userId)
+        && isValidId(data.notebookId)
+        && isNonEmptyStr(data.title, 300)
+        && data.content is string && data.content.size() <= 300000
+        && isOptList(data, 'tags', 30)
+        && isOptBool(data, 'aiGenerated')
+        && isOptStr(data, 'createdAt', 64)
+        && isNonEmptyStr(data.updatedAt, 64);
+    }
+
+    function isValidNoteVersion(data, docId) {
+      return data.id == docId
+        && data.userId == request.auth.uid
+        && isValidId(data.userId)
+        && isValidId(data.noteId)
+        && isNonEmptyStr(data.title, 300)
+        && data.content is string && data.content.size() <= 300000
+        && isNonEmptyStr(data.savedAt, 64);
+    }
+
+    function isValidFlashcardSet(data, docId) {
+      return data.id == docId
+        && data.userId == request.auth.uid
+        && isValidId(data.userId)
+        && isValidId(data.notebookId)
+        && isNonEmptyStr(data.title, 300)
+        && isOptStr(data, 'description', 1000)
+        && isOptStr(data, 'category', 100)
+        && data.cards is list && data.cards.size() <= 200
+        && isNonEmptyStr(data.createdAt, 64)
+        && isOptStr(data, 'updatedAt', 64);
+    }
+
+    function isValidQuizSet(data, docId) {
+      return data.id == docId
+        && data.userId == request.auth.uid
+        && isValidId(data.userId)
+        && isValidId(data.notebookId)
+        && isNonEmptyStr(data.title, 300)
+        && isOptStr(data, 'description', 1000)
+        && (!('difficulty' in data) || data.difficulty in ['easy', 'medium', 'hard'])
+        && isOptNum(data, 'bestScore')
+        && data.questions is list && data.questions.size() <= 200
+        && isNonEmptyStr(data.createdAt, 64)
+        && isOptStr(data, 'updatedAt', 64);
+    }
+
+    function isValidQuizAttempt(data, docId) {
+      return data.id == docId
+        && data.userId == request.auth.uid
+        && isValidId(data.userId)
+        && isValidId(data.quizSetId)
+        && isOptStr(data, 'quizTitle', 300)
+        && data.score is number
+        && isOptNum(data, 'scorePercent')
+        && data.totalQuestions is number
+        && data.correctCount is number
+        && isOptNum(data, 'timeTakenSeconds')
+        && (!('answers' in data) || data.answers is map)
+        && isNonEmptyStr(data.completedAt, 64);
+    }
+
+    function isValidChatSession(data, docId) {
+      return data.id == docId
+        && data.userId == request.auth.uid
+        && isValidId(data.userId)
+        && isOptStr(data, 'notebookId', 128)
+        && isNonEmptyStr(data.title, 300)
+        && isNonEmptyStr(data.persona, 64)
+        && isOptBool(data, 'isArchived')
+        && data.messages is list && data.messages.size() <= 300
+        && isNonEmptyStr(data.createdAt, 64)
+        && isNonEmptyStr(data.updatedAt, 64);
+    }
+
+    function isValidStudyPlan(data, docId) {
+      return data.id == docId
+        && data.userId == request.auth.uid
+        && isValidId(data.userId)
+        && isNonEmptyStr(data.title, 300)
+        && isNonEmptyStr(data.examDate, 32)
+        && isOptNum(data, 'hoursPerDay')
+        && isOptNum(data, 'overallProgress')
+        && isOptList(data, 'subjects', 30)
+        && isOptList(data, 'weakTopics', 30)
+        && isOptList(data, 'strongTopics', 30)
+        && isOptStr(data, 'preferredStudyTime', 40)
+        && isOptList(data, 'prioritizedTopics', 50)
+        && isOptList(data, 'adaptiveTips', 20)
+        && data.schedule is list && data.schedule.size() <= 90
+        && isNonEmptyStr(data.createdAt, 64)
+        && isNonEmptyStr(data.updatedAt, 64);
+    }
+
+    function isValidStudyTask(data, docId) {
+      return data.id == docId
+        && data.userId == request.auth.uid
+        && isValidId(data.userId)
+        && isNonEmptyStr(data.title, 300)
+        && isOptStr(data, 'subject', 120)
+        && isOptStr(data, 'scheduledDate', 32)
+        && isOptNum(data, 'durationMinutes')
+        && data.completed is bool
+        && (!('priority' in data) || data.priority in ['low', 'medium', 'high'])
+        && isOptStr(data, 'taskType', 40)
+        && isNonEmptyStr(data.createdAt, 64);
+    }
+
+    function isValidNotification(data, docId) {
+      return data.id == docId
+        && data.userId == request.auth.uid
+        && isValidId(data.userId)
+        && isNonEmptyStr(data.title, 200)
+        && isNonEmptyStr(data.message, 1000)
+        && data.type in ['reminder', 'exam', 'flashcard', 'streak', 'document']
+        && data.read is bool
+        && isNonEmptyStr(data.createdAt, 64);
+    }
+
+    function isValidSearchHistory(data, docId) {
+      return data.id == docId
+        && data.userId == request.auth.uid
+        && isValidId(data.userId)
+        && isNonEmptyStr(data.keyword, 200)
+        && isOptStr(data, 'category', 40)
+        && isOptNum(data, 'resultCount')
+        && isNonEmptyStr(data.createdAt, 64);
+    }
+
+    function isValidRecentDoc(data, docId) {
+      return data.id == docId
+        && data.userId == request.auth.uid
+        && isValidId(data.userId)
+        && isValidId(data.documentId)
+        && isNonEmptyStr(data.documentTitle, 300)
+        && isOptStr(data, 'documentType', 32)
+        && isNonEmptyStr(data.openedAt, 64);
+    }
+
+    function isValidDocumentAnnotation(data, docId) {
+      return data.id == docId
+        && data.userId == request.auth.uid
+        && isValidId(data.userId)
+        && isValidId(data.documentId)
+        && isValidId(data.notebookId)
+        && isOptNum(data, 'pageNumber')
+        && isNonEmptyStr(data.content, 4000)
+        && data.type in ['sticky_note', 'highlight', 'bookmark']
+        && isNonEmptyStr(data.createdAt, 64)
+        && isOptStr(data, 'updatedAt', 64);
+    }
+
+    function isValidAiUsageLog(data, docId) {
+      return data.id == docId
+        && data.userId == request.auth.uid
+        && isValidId(data.userId)
+        && isNonEmptyStr(data.feature, 64)
+        && isOptStr(data, 'provider', 32)
+        && isOptStr(data, 'prompt', 2000)
+        && isOptStr(data, 'response', 2000)
+        && isOptNum(data, 'latencyMs')
+        && isOptNum(data, 'inputTokens')
+        && isOptNum(data, 'outputTokens')
+        && isOptNum(data, 'costUsd')
+        && isOptNum(data, 'tokensConsumed')
+        && isNonEmptyStr(data.modelName, 80)
+        && (!('status' in data) || data.status in ['success', 'fallback_success', 'cached', 'error'])
+        && isOptStr(data, 'errorCategory', 64)
+        && isOptBool(data, 'cached')
+        && isOptBool(data, 'fallbackUsed')
+        && isNonEmptyStr(data.createdAt, 64);
+    }
+
+    function isValidActivityLog(data, docId) {
+      return data.id == docId
+        && data.userId == request.auth.uid
+        && isValidId(data.userId)
+        && data.type in ['source_added', 'quiz_completed', 'flashcard_review', 'ai_note_generated', 'chat_query', 'summary_generated', 'planner_completed', 'study_session', 'exam_prep', 'adaptive_tutor', 'audio_lecture', 'diagram_created']
+        && isNonEmptyStr(data.title, 300)
+        && isOptStr(data, 'details', 1000)
+        && isOptStr(data, 'score', 40)
+        && isOptStr(data, 'timestamp', 64)
+        && isNonEmptyStr(data.createdAt, 64);
+    }
+
+    function isValidStudySession(data, docId) {
+      return data.id == docId
+        && data.userId == request.auth.uid
+        && isValidId(data.userId)
+        && isOptStr(data, 'notebookId', 128)
+        && isNonEmptyStr(data.subject, 200)
+        && isOptStr(data, 'activityType', 40)
+        && isNonEmptyStr(data.startedAt, 64)
+        && isNonEmptyStr(data.endedAt, 64)
+        && data.activeDurationSeconds is number && data.activeDurationSeconds >= 0
+        && isOptNum(data, 'pausedSeconds')
+        && isOptStr(data, 'notes', 1000)
+        && isNonEmptyStr(data.createdAt, 64);
+    }
+
+    function isValidVisualDiagram(data, docId) {
+      return data.id == docId
+        && data.userId == request.auth.uid
+        && isValidId(data.userId)
+        && isValidId(data.notebookId)
+        && isNonEmptyStr(data.title, 300)
+        && isNonEmptyStr(data.diagramType, 40)
+        && isOptStr(data, 'description', 2000)
+        && data.nodes is list && data.nodes.size() <= 120
+        && data.edges is list && data.edges.size() <= 250
+        && isOptStr(data, 'mermaidSyntax', 30000)
+        && isNonEmptyStr(data.createdAt, 64)
+        && isNonEmptyStr(data.updatedAt, 64);
+    }
+
+    function isValidExamPrepGuide(data, docId) {
+      return data.id == docId
+        && data.userId == request.auth.uid
+        && isValidId(data.userId)
+        && isValidId(data.notebookId)
+        && isNonEmptyStr(data.subject, 200)
+        && isNonEmptyStr(data.examDate, 32)
+        && isOptStr(data, 'syllabusSummary', 20000)
+        && isOptList(data, 'topicPlan', 60)
+        && isOptList(data, 'importantConcepts', 80)
+        && isOptList(data, 'recurringThemes', 40)
+        && isOptList(data, 'likelyTopics', 40)
+        && isOptList(data, 'practiceQuestions', 40)
+        && isOptList(data, 'formulaSheet', 60)
+        && isOptList(data, 'revisionChecklist', 80)
+        && isOptList(data, 'mockExamQuestions', 50)
+        && isOptList(data, 'evidenceSources', 40)
+        && isOptStr(data, 'uncertaintyNotice', 1000)
+        && isNonEmptyStr(data.createdAt, 64)
+        && isNonEmptyStr(data.updatedAt, 64);
+    }
+
+    function isValidTopicMastery(data, docId) {
+      return data.id == docId
+        && data.userId == request.auth.uid
+        && isValidId(data.userId)
+        && isOptStr(data, 'notebookId', 128)
+        && isNonEmptyStr(data.subject, 200)
+        && isNonEmptyStr(data.topic, 250)
+        && data.masteryLevel is number && data.masteryLevel >= 0 && data.masteryLevel <= 100
+        && data.difficultyLevel in ['foundational', 'intermediate', 'advanced']
+        && data.status in ['struggling', 'learning', 'proficient', 'mastered']
+        && isOptNum(data, 'attemptsCount')
+        && isOptNum(data, 'correctCount')
+        && isOptStr(data, 'lastReviewedAt', 64)
+        && isNonEmptyStr(data.nextReviewDate, 64)
+        && isOptStr(data, 'struggleNotes', 1000)
+        && isOptStr(data, 'createdAt', 64)
+        && isNonEmptyStr(data.updatedAt, 64);
+    }
+
+    function isValidAudioLecture(data, docId) {
+      return data.id == docId
+        && data.userId == request.auth.uid
+        && isValidId(data.userId)
+        && isValidId(data.notebookId)
+        && isNonEmptyStr(data.title, 300)
+        && isOptStr(data, 'originalFilename', 300)
+        && isOptStr(data, 'mimeType', 128)
+        && isOptNum(data, 'fileSizeBytes')
+        && isOptNum(data, 'durationSeconds')
+        && isNonEmptyStr(data.transcriptText, 200000)
+        && isOptList(data, 'transcriptSegments', 400)
+        && isOptBool(data, 'speakerNotesAvailable')
+        && isOptStr(data, 'speakerNotesNotice', 500)
+        && isOptStr(data, 'summary', 20000)
+        && isOptList(data, 'keyConcepts', 50)
+        && isOptList(data, 'flashcards', 50)
+        && isOptList(data, 'quizQuestions', 30)
+        && isOptStr(data, 'revisionNotes', 40000)
+        && isNonEmptyStr(data.createdAt, 64);
+    }
+
+    // -------------------------------------------------------------------------
+    // Collection Rules (Strict Ownership + Schema Validation)
+    // -------------------------------------------------------------------------
+    match /test/connection {
+      allow get: if isSignedIn();
+    }
+
+    match /admins/{adminUid} {
+      allow get: if isValidId(adminUid) && (isOwnerId(adminUid) || isAdmin());
+      allow list: if isAdmin();
+      allow create, update, delete: if isAdmin() && isValidId(adminUid);
+    }
+
+    match /users/{userId} {
+      allow get: if isValidId(userId) && (isOwnerId(userId) || isAdmin());
+      allow list: if isAdmin();
+      allow create: if isValidId(userId)
+        && isOwnerId(userId)
+        && isValidUserProfile(incoming(), userId)
+        && incoming().role in ['Student', 'Educator']
+        && incoming().keys().hasAll(['uid', 'email', 'name', 'role', 'createdAt', 'updatedAt'])
+        && incoming().keys().hasOnly(['uid', 'email', 'name', 'role', 'avatar', 'studyGoalMinutes', 'streakDays', 'cardsMastered', 'quizzesCompleted', 'timeSpentMinutes', 'status', 'createdAt', 'updatedAt']);
+      allow update: if isValidId(userId)
+        && (isOwnerId(userId) || isAdmin())
+        && isValidUserProfile(incoming(), userId)
+        && incoming().uid == existing().uid
+        && incoming().createdAt == existing().createdAt
+        && (
+          isAdmin() ||
+          (incoming().role == existing().role &&
+           ((!('status' in existing()) && !('status' in incoming())) || incoming().status == existing().status) &&
+           incoming().diff(existing()).affectedKeys().hasOnly(['name', 'avatar', 'studyGoalMinutes', 'streakDays', 'cardsMastered', 'quizzesCompleted', 'timeSpentMinutes', 'updatedAt']))
+        );
+      allow delete: if isValidId(userId) && (isOwnerId(userId) || isAdmin());
+    }
+
+    match /user_preferences/{userId} {
+      allow get: if isValidId(userId) && isOwnerId(userId);
+      allow list: if isSignedIn() && existing().userId == request.auth.uid;
+      allow create: if isValidId(userId)
+        && isOwnerId(userId)
+        && isValidUserPreferences(incoming(), userId)
+        && incoming().keys().hasAll(['userId', 'theme', 'aiModelPreference', 'updatedAt'])
+        && incoming().keys().hasOnly(['userId', 'theme', 'aiModelPreference', 'defaultCardCount', 'socraticTutorMode', 'autoSummarize', 'language', 'fontSize', 'notificationsEnabled', 'privacyMode', 'defaultPersona', 'onboardingDismissed', 'updatedAt']);
+      allow update: if isValidId(userId)
+        && isOwnerId(userId)
+        && isValidUserPreferences(incoming(), userId)
+        && incoming().userId == existing().userId
+        && incoming().diff(existing()).affectedKeys().hasOnly(['theme', 'aiModelPreference', 'defaultCardCount', 'socraticTutorMode', 'autoSummarize', 'language', 'fontSize', 'notificationsEnabled', 'privacyMode', 'defaultPersona', 'onboardingDismissed', 'updatedAt']);
+      allow delete: if isValidId(userId) && isOwnerId(userId);
+    }
+
+    match /notebooks/{notebookId} {
+      allow get: if isValidId(notebookId) && isSignedIn() && existing().userId == request.auth.uid;
+      allow list: if isSignedIn() && existing().userId == request.auth.uid;
+      allow create: if isValidId(notebookId)
+        && isSignedIn()
+        && isValidNotebook(incoming(), notebookId)
+        && incoming().keys().hasAll(['id', 'userId', 'title', 'createdAt', 'updatedAt'])
+        && incoming().keys().hasOnly(['id', 'userId', 'title', 'description', 'color', 'createdAt', 'updatedAt']);
+      allow update: if isValidId(notebookId)
+        && isSignedIn()
+        && existing().userId == request.auth.uid
+        && isValidNotebook(incoming(), notebookId)
+        && incoming().id == existing().id
+        && incoming().userId == existing().userId
+        && incoming().createdAt == existing().createdAt
+        && incoming().diff(existing()).affectedKeys().hasOnly(['title', 'description', 'color', 'updatedAt']);
+      allow delete: if isValidId(notebookId) && isSignedIn() && existing().userId == request.auth.uid;
+    }
+
+    match /documents/{documentId} {
+      allow get: if isValidId(documentId) && isSignedIn() && existing().userId == request.auth.uid;
+      allow list: if isSignedIn() && existing().userId == request.auth.uid;
+      allow create: if isValidId(documentId)
+        && isSignedIn()
+        && isValidDocument(incoming(), documentId)
+        && incoming().keys().hasAll(['id', 'userId', 'notebookId', 'title', 'type', 'processingStatus', 'content', 'addedAt'])
+        && incoming().keys().hasOnly(['id', 'userId', 'notebookId', 'title', 'originalFilename', 'type', 'mimeType', 'fileSizeBytes', 'fileSize', 'storageRef', 'blobChunkCount', 'processingStatus', 'progressPercent', 'chunkCount', 'pageCount', 'embeddingModel', 'ocrWarnings', 'errorMessage', 'content', 'summary', 'keyConcepts', 'addedAt', 'updatedAt']);
+      allow update: if isValidId(documentId)
+        && isSignedIn()
+        && existing().userId == request.auth.uid
+        && isValidDocument(incoming(), documentId)
+        && incoming().id == existing().id
+        && incoming().userId == existing().userId
+        && incoming().addedAt == existing().addedAt
+        && incoming().diff(existing()).affectedKeys().hasOnly(['notebookId', 'title', 'originalFilename', 'type', 'mimeType', 'fileSizeBytes', 'fileSize', 'storageRef', 'blobChunkCount', 'processingStatus', 'progressPercent', 'chunkCount', 'pageCount', 'embeddingModel', 'ocrWarnings', 'errorMessage', 'content', 'summary', 'keyConcepts', 'updatedAt']);
+      allow delete: if isValidId(documentId) && isSignedIn() && existing().userId == request.auth.uid;
+    }
+
+    match /document_chunks/{chunkId} {
+      allow get: if isValidId(chunkId) && isSignedIn() && existing().userId == request.auth.uid;
+      allow list: if isSignedIn() && existing().userId == request.auth.uid;
+      allow create: if isValidId(chunkId)
+        && isSignedIn()
+        && isValidChunk(incoming(), chunkId)
+        && incoming().keys().hasAll(['id', 'userId', 'notebookId', 'documentId', 'chunkIndex', 'content', 'createdAt'])
+        && incoming().keys().hasOnly(['id', 'userId', 'notebookId', 'documentId', 'chunkIndex', 'content', 'contentHash', 'pageNumber', 'slideNumber', 'sectionHeading', 'sourceTitle', 'tokenCount', 'embedding', 'embeddingModel', 'createdAt']);
+      allow update: if isValidId(chunkId)
+        && isSignedIn()
+        && existing().userId == request.auth.uid
+        && isValidChunk(incoming(), chunkId)
+        && incoming().id == existing().id
+        && incoming().userId == existing().userId
+        && incoming().createdAt == existing().createdAt
+        && incoming().diff(existing()).affectedKeys().hasOnly(['content', 'contentHash', 'pageNumber', 'slideNumber', 'sectionHeading', 'sourceTitle', 'tokenCount', 'embedding', 'embeddingModel']);
+      allow delete: if isValidId(chunkId) && isSignedIn() && existing().userId == request.auth.uid;
+    }
+
+    match /document_blobs/{blobId} {
+      allow get: if isValidId(blobId) && isSignedIn() && existing().userId == request.auth.uid;
+      allow list: if isSignedIn() && existing().userId == request.auth.uid;
+      allow create: if isValidId(blobId)
+        && isSignedIn()
+        && isValidBlob(incoming(), blobId)
+        && incoming().keys().hasAll(['id', 'userId', 'documentId', 'chunkIndex', 'totalChunks', 'dataBase64', 'createdAt'])
+        && incoming().keys().hasOnly(['id', 'userId', 'documentId', 'chunkIndex', 'totalChunks', 'mimeType', 'originalFilename', 'dataBase64', 'createdAt']);
+      allow delete: if isValidId(blobId) && isSignedIn() && existing().userId == request.auth.uid;
+    }
+
+    match /study_notes/{noteId} {
+      allow get: if isValidId(noteId) && isSignedIn() && existing().userId == request.auth.uid;
+      allow list: if isSignedIn() && existing().userId == request.auth.uid;
+      allow create: if isValidId(noteId)
+        && isSignedIn()
+        && isValidNote(incoming(), noteId)
+        && incoming().keys().hasAll(['id', 'userId', 'notebookId', 'title', 'content', 'updatedAt'])
+        && incoming().keys().hasOnly(['id', 'userId', 'notebookId', 'title', 'content', 'tags', 'aiGenerated', 'createdAt', 'updatedAt']);
+      allow update: if isValidId(noteId)
+        && isSignedIn()
+        && existing().userId == request.auth.uid
+        && isValidNote(incoming(), noteId)
+        && incoming().id == existing().id
+        && incoming().userId == existing().userId
+        && incoming().diff(existing()).affectedKeys().hasOnly(['notebookId', 'title', 'content', 'tags', 'aiGenerated', 'updatedAt']);
+      allow delete: if isValidId(noteId) && isSignedIn() && existing().userId == request.auth.uid;
+    }
+
+    match /note_versions/{versionId} {
+      allow get: if isValidId(versionId) && isSignedIn() && existing().userId == request.auth.uid;
+      allow list: if isSignedIn() && existing().userId == request.auth.uid;
+      allow create: if isValidId(versionId)
+        && isSignedIn()
+        && isValidNoteVersion(incoming(), versionId)
+        && incoming().keys().hasAll(['id', 'userId', 'noteId', 'title', 'content', 'savedAt'])
+        && incoming().keys().hasOnly(['id', 'userId', 'noteId', 'title', 'content', 'savedAt']);
+      allow delete: if isValidId(versionId) && isSignedIn() && existing().userId == request.auth.uid;
+    }
+
+    match /flashcard_sets/{setId} {
+      allow get: if isValidId(setId) && isSignedIn() && existing().userId == request.auth.uid;
+      allow list: if isSignedIn() && existing().userId == request.auth.uid;
+      allow create: if isValidId(setId)
+        && isSignedIn()
+        && isValidFlashcardSet(incoming(), setId)
+        && incoming().keys().hasAll(['id', 'userId', 'notebookId', 'title', 'cards', 'createdAt'])
+        && incoming().keys().hasOnly(['id', 'userId', 'notebookId', 'title', 'description', 'category', 'cards', 'createdAt', 'updatedAt']);
+      allow update: if isValidId(setId)
+        && isSignedIn()
+        && existing().userId == request.auth.uid
+        && isValidFlashcardSet(incoming(), setId)
+        && incoming().id == existing().id
+        && incoming().userId == existing().userId
+        && incoming().createdAt == existing().createdAt
+        && incoming().diff(existing()).affectedKeys().hasOnly(['notebookId', 'title', 'description', 'category', 'cards', 'updatedAt']);
+      allow delete: if isValidId(setId) && isSignedIn() && existing().userId == request.auth.uid;
+    }
+
+    match /quiz_sets/{quizId} {
+      allow get: if isValidId(quizId) && isSignedIn() && existing().userId == request.auth.uid;
+      allow list: if isSignedIn() && existing().userId == request.auth.uid;
+      allow create: if isValidId(quizId)
+        && isSignedIn()
+        && isValidQuizSet(incoming(), quizId)
+        && incoming().keys().hasAll(['id', 'userId', 'notebookId', 'title', 'questions', 'createdAt'])
+        && incoming().keys().hasOnly(['id', 'userId', 'notebookId', 'title', 'description', 'difficulty', 'bestScore', 'questions', 'createdAt', 'updatedAt']);
+      allow update: if isValidId(quizId)
+        && isSignedIn()
+        && existing().userId == request.auth.uid
+        && isValidQuizSet(incoming(), quizId)
+        && incoming().id == existing().id
+        && incoming().userId == existing().userId
+        && incoming().createdAt == existing().createdAt
+        && incoming().diff(existing()).affectedKeys().hasOnly(['notebookId', 'title', 'description', 'difficulty', 'bestScore', 'questions', 'updatedAt']);
+      allow delete: if isValidId(quizId) && isSignedIn() && existing().userId == request.auth.uid;
+    }
+
+    match /quiz_attempts/{attemptId} {
+      allow get: if isValidId(attemptId) && isSignedIn() && existing().userId == request.auth.uid;
+      allow list: if isSignedIn() && existing().userId == request.auth.uid;
+      allow create: if isValidId(attemptId)
+        && isSignedIn()
+        && isValidQuizAttempt(incoming(), attemptId)
+        && incoming().keys().hasAll(['id', 'userId', 'quizSetId', 'score', 'totalQuestions', 'correctCount', 'completedAt'])
+        && incoming().keys().hasOnly(['id', 'userId', 'quizSetId', 'quizTitle', 'score', 'scorePercent', 'totalQuestions', 'correctCount', 'timeTakenSeconds', 'answers', 'completedAt']);
+      allow delete: if isValidId(attemptId) && isSignedIn() && existing().userId == request.auth.uid;
+    }
+
+    match /chat_sessions/{sessionId} {
+      allow get: if isValidId(sessionId) && isSignedIn() && existing().userId == request.auth.uid;
+      allow list: if isSignedIn() && existing().userId == request.auth.uid;
+      allow create: if isValidId(sessionId)
+        && isSignedIn()
+        && isValidChatSession(incoming(), sessionId)
+        && incoming().keys().hasAll(['id', 'userId', 'title', 'persona', 'messages', 'createdAt', 'updatedAt'])
+        && incoming().keys().hasOnly(['id', 'userId', 'notebookId', 'title', 'persona', 'isArchived', 'messages', 'createdAt', 'updatedAt']);
+      allow update: if isValidId(sessionId)
+        && isSignedIn()
+        && existing().userId == request.auth.uid
+        && isValidChatSession(incoming(), sessionId)
+        && incoming().id == existing().id
+        && incoming().userId == existing().userId
+        && incoming().createdAt == existing().createdAt
+        && incoming().diff(existing()).affectedKeys().hasOnly(['notebookId', 'title', 'persona', 'isArchived', 'messages', 'updatedAt']);
+      allow delete: if isValidId(sessionId) && isSignedIn() && existing().userId == request.auth.uid;
+    }
+
+    match /study_plans/{planId} {
+      allow get: if isValidId(planId) && isSignedIn() && existing().userId == request.auth.uid;
+      allow list: if isSignedIn() && existing().userId == request.auth.uid;
+      allow create: if isValidId(planId)
+        && isSignedIn()
+        && isValidStudyPlan(incoming(), planId)
+        && incoming().keys().hasAll(['id', 'userId', 'title', 'examDate', 'schedule', 'createdAt', 'updatedAt'])
+        && incoming().keys().hasOnly(['id', 'userId', 'title', 'examDate', 'hoursPerDay', 'overallProgress', 'subjects', 'weakTopics', 'strongTopics', 'preferredStudyTime', 'prioritizedTopics', 'adaptiveTips', 'schedule', 'createdAt', 'updatedAt']);
+      allow update: if isValidId(planId)
+        && isSignedIn()
+        && existing().userId == request.auth.uid
+        && isValidStudyPlan(incoming(), planId)
+        && incoming().id == existing().id
+        && incoming().userId == existing().userId
+        && incoming().createdAt == existing().createdAt
+        && incoming().diff(existing()).affectedKeys().hasOnly(['title', 'examDate', 'hoursPerDay', 'overallProgress', 'subjects', 'weakTopics', 'strongTopics', 'preferredStudyTime', 'prioritizedTopics', 'adaptiveTips', 'schedule', 'updatedAt']);
+      allow delete: if isValidId(planId) && isSignedIn() && existing().userId == request.auth.uid;
+    }
+
+    match /study_tasks/{taskId} {
+      allow get: if isValidId(taskId) && isSignedIn() && existing().userId == request.auth.uid;
+      allow list: if isSignedIn() && existing().userId == request.auth.uid;
+      allow create: if isValidId(taskId)
+        && isSignedIn()
+        && isValidStudyTask(incoming(), taskId)
+        && incoming().keys().hasAll(['id', 'userId', 'title', 'completed', 'createdAt'])
+        && incoming().keys().hasOnly(['id', 'userId', 'title', 'subject', 'scheduledDate', 'durationMinutes', 'completed', 'priority', 'taskType', 'createdAt']);
+      allow update: if isValidId(taskId)
+        && isSignedIn()
+        && existing().userId == request.auth.uid
+        && isValidStudyTask(incoming(), taskId)
+        && incoming().id == existing().id
+        && incoming().userId == existing().userId
+        && incoming().createdAt == existing().createdAt
+        && incoming().diff(existing()).affectedKeys().hasOnly(['title', 'subject', 'scheduledDate', 'durationMinutes', 'completed', 'priority', 'taskType']);
+      allow delete: if isValidId(taskId) && isSignedIn() && existing().userId == request.auth.uid;
+    }
+
+    match /notifications/{notificationId} {
+      allow get: if isValidId(notificationId) && isSignedIn() && existing().userId == request.auth.uid;
+      allow list: if isSignedIn() && existing().userId == request.auth.uid;
+      allow create: if isValidId(notificationId)
+        && isSignedIn()
+        && isValidNotification(incoming(), notificationId)
+        && incoming().keys().hasAll(['id', 'userId', 'title', 'message', 'type', 'read', 'createdAt'])
+        && incoming().keys().hasOnly(['id', 'userId', 'title', 'message', 'type', 'read', 'createdAt']);
+      allow update: if isValidId(notificationId)
+        && isSignedIn()
+        && existing().userId == request.auth.uid
+        && isValidNotification(incoming(), notificationId)
+        && incoming().id == existing().id
+        && incoming().userId == existing().userId
+        && incoming().createdAt == existing().createdAt
+        && incoming().diff(existing()).affectedKeys().hasOnly(['read']);
+      allow delete: if isValidId(notificationId) && isSignedIn() && existing().userId == request.auth.uid;
+    }
+
+    match /search_history/{entryId} {
+      allow get: if isValidId(entryId) && isSignedIn() && existing().userId == request.auth.uid;
+      allow list: if isSignedIn() && existing().userId == request.auth.uid;
+      allow create: if isValidId(entryId)
+        && isSignedIn()
+        && isValidSearchHistory(incoming(), entryId)
+        && incoming().keys().hasAll(['id', 'userId', 'keyword', 'createdAt'])
+        && incoming().keys().hasOnly(['id', 'userId', 'keyword', 'category', 'resultCount', 'createdAt']);
+      allow delete: if isValidId(entryId) && isSignedIn() && existing().userId == request.auth.uid;
+    }
+
+    match /recent_documents/{entryId} {
+      allow get: if isValidId(entryId) && isSignedIn() && existing().userId == request.auth.uid;
+      allow list: if isSignedIn() && existing().userId == request.auth.uid;
+      allow create: if isValidId(entryId)
+        && isSignedIn()
+        && isValidRecentDoc(incoming(), entryId)
+        && incoming().keys().hasAll(['id', 'userId', 'documentId', 'documentTitle', 'openedAt'])
+        && incoming().keys().hasOnly(['id', 'userId', 'documentId', 'documentTitle', 'documentType', 'openedAt']);
+      allow update: if isValidId(entryId)
+        && isSignedIn()
+        && existing().userId == request.auth.uid
+        && isValidRecentDoc(incoming(), entryId)
+        && incoming().id == existing().id
+        && incoming().userId == existing().userId
+        && incoming().diff(existing()).affectedKeys().hasOnly(['documentTitle', 'documentType', 'openedAt']);
+      allow delete: if isValidId(entryId) && isSignedIn() && existing().userId == request.auth.uid;
+    }
+
+    match /document_annotations/{annotationId} {
+      allow get: if isValidId(annotationId) && isSignedIn() && existing().userId == request.auth.uid;
+      allow list: if isSignedIn() && existing().userId == request.auth.uid;
+      allow create: if isValidId(annotationId)
+        && isSignedIn()
+        && isValidDocumentAnnotation(incoming(), annotationId)
+        && incoming().keys().hasAll(['id', 'userId', 'documentId', 'notebookId', 'content', 'type', 'createdAt'])
+        && incoming().keys().hasOnly(['id', 'userId', 'documentId', 'notebookId', 'pageNumber', 'content', 'type', 'createdAt', 'updatedAt']);
+      allow update: if isValidId(annotationId)
+        && isSignedIn()
+        && existing().userId == request.auth.uid
+        && isValidDocumentAnnotation(incoming(), annotationId)
+        && incoming().id == existing().id
+        && incoming().userId == existing().userId
+        && incoming().createdAt == existing().createdAt
+        && incoming().diff(existing()).affectedKeys().hasOnly(['content', 'type', 'pageNumber', 'updatedAt']);
+      allow delete: if isValidId(annotationId) && isSignedIn() && existing().userId == request.auth.uid;
+    }
+
+    match /ai_usage_logs/{logId} {
+      allow get: if isValidId(logId) && isSignedIn() && (existing().userId == request.auth.uid || isAdmin());
+      allow list: if (isSignedIn() && existing().userId == request.auth.uid) || isAdmin();
+      allow create: if isValidId(logId)
+        && isSignedIn()
+        && isValidAiUsageLog(incoming(), logId)
+        && incoming().keys().hasAll(['id', 'userId', 'feature', 'modelName', 'createdAt'])
+        && incoming().keys().hasOnly(['id', 'userId', 'feature', 'provider', 'prompt', 'response', 'latencyMs', 'inputTokens', 'outputTokens', 'costUsd', 'tokensConsumed', 'modelName', 'status', 'errorCategory', 'cached', 'fallbackUsed', 'createdAt']);
+      allow delete: if isValidId(logId) && isSignedIn() && (existing().userId == request.auth.uid || isAdmin());
+    }
+
+    match /activity_logs/{logId} {
+      allow get: if isValidId(logId) && isSignedIn() && existing().userId == request.auth.uid;
+      allow list: if isSignedIn() && existing().userId == request.auth.uid;
+      allow create: if isValidId(logId)
+        && isSignedIn()
+        && isValidActivityLog(incoming(), logId)
+        && incoming().keys().hasAll(['id', 'userId', 'type', 'title', 'createdAt'])
+        && incoming().keys().hasOnly(['id', 'userId', 'type', 'title', 'details', 'score', 'timestamp', 'createdAt']);
+      allow delete: if isValidId(logId) && isSignedIn() && existing().userId == request.auth.uid;
+    }
+
+    match /study_sessions/{sessionId} {
+      allow get: if isValidId(sessionId) && isSignedIn() && existing().userId == request.auth.uid;
+      allow list: if isSignedIn() && existing().userId == request.auth.uid;
+      allow create: if isValidId(sessionId)
+        && isSignedIn()
+        && isValidStudySession(incoming(), sessionId)
+        && incoming().keys().hasAll(['id', 'userId', 'subject', 'startedAt', 'endedAt', 'activeDurationSeconds', 'createdAt'])
+        && incoming().keys().hasOnly(['id', 'userId', 'notebookId', 'subject', 'activityType', 'startedAt', 'endedAt', 'activeDurationSeconds', 'pausedSeconds', 'notes', 'createdAt']);
+      allow delete: if isValidId(sessionId) && isSignedIn() && existing().userId == request.auth.uid;
+    }
+
+    match /diagrams/{diagramId} {
+      allow get: if isValidId(diagramId) && isSignedIn() && existing().userId == request.auth.uid;
+      allow list: if isSignedIn() && existing().userId == request.auth.uid;
+      allow create: if isValidId(diagramId)
+        && isSignedIn()
+        && isValidVisualDiagram(incoming(), diagramId)
+        && incoming().keys().hasAll(['id', 'userId', 'notebookId', 'title', 'diagramType', 'nodes', 'edges', 'createdAt', 'updatedAt'])
+        && incoming().keys().hasOnly(['id', 'userId', 'notebookId', 'title', 'diagramType', 'description', 'nodes', 'edges', 'mermaidSyntax', 'createdAt', 'updatedAt']);
+      allow update: if isValidId(diagramId)
+        && isSignedIn()
+        && existing().userId == request.auth.uid
+        && isValidVisualDiagram(incoming(), diagramId)
+        && incoming().id == existing().id
+        && incoming().userId == existing().userId
+        && incoming().createdAt == existing().createdAt
+        && incoming().diff(existing()).affectedKeys().hasOnly(['notebookId', 'title', 'diagramType', 'description', 'nodes', 'edges', 'mermaidSyntax', 'updatedAt']);
+      allow delete: if isValidId(diagramId) && isSignedIn() && existing().userId == request.auth.uid;
+    }
+
+    match /exam_prep_guides/{guideId} {
+      allow get: if isValidId(guideId) && isSignedIn() && existing().userId == request.auth.uid;
+      allow list: if isSignedIn() && existing().userId == request.auth.uid;
+      allow create: if isValidId(guideId)
+        && isSignedIn()
+        && isValidExamPrepGuide(incoming(), guideId)
+        && incoming().keys().hasAll(['id', 'userId', 'notebookId', 'subject', 'examDate', 'createdAt', 'updatedAt'])
+        && incoming().keys().hasOnly(['id', 'userId', 'notebookId', 'subject', 'examDate', 'syllabusSummary', 'topicPlan', 'importantConcepts', 'recurringThemes', 'likelyTopics', 'practiceQuestions', 'formulaSheet', 'revisionChecklist', 'mockExamQuestions', 'evidenceSources', 'uncertaintyNotice', 'createdAt', 'updatedAt']);
+      allow update: if isValidId(guideId)
+        && isSignedIn()
+        && existing().userId == request.auth.uid
+        && isValidExamPrepGuide(incoming(), guideId)
+        && incoming().id == existing().id
+        && incoming().userId == existing().userId
+        && incoming().createdAt == existing().createdAt
+        && incoming().diff(existing()).affectedKeys().hasOnly(['notebookId', 'subject', 'examDate', 'syllabusSummary', 'topicPlan', 'importantConcepts', 'recurringThemes', 'likelyTopics', 'practiceQuestions', 'formulaSheet', 'revisionChecklist', 'mockExamQuestions', 'evidenceSources', 'uncertaintyNotice', 'updatedAt']);
+      allow delete: if isValidId(guideId) && isSignedIn() && existing().userId == request.auth.uid;
+    }
+
+    match /topic_mastery/{masteryId} {
+      allow get: if isValidId(masteryId) && isSignedIn() && existing().userId == request.auth.uid;
+      allow list: if isSignedIn() && existing().userId == request.auth.uid;
+      allow create: if isValidId(masteryId)
+        && isSignedIn()
+        && isValidTopicMastery(incoming(), masteryId)
+        && incoming().keys().hasAll(['id', 'userId', 'subject', 'topic', 'masteryLevel', 'difficultyLevel', 'status', 'nextReviewDate', 'updatedAt'])
+        && incoming().keys().hasOnly(['id', 'userId', 'notebookId', 'subject', 'topic', 'masteryLevel', 'difficultyLevel', 'status', 'attemptsCount', 'correctCount', 'lastReviewedAt', 'nextReviewDate', 'struggleNotes', 'createdAt', 'updatedAt']);
+      allow update: if isValidId(masteryId)
+        && isSignedIn()
+        && existing().userId == request.auth.uid
+        && isValidTopicMastery(incoming(), masteryId)
+        && incoming().id == existing().id
+        && incoming().userId == existing().userId
+        && incoming().diff(existing()).affectedKeys().hasOnly(['notebookId', 'subject', 'topic', 'masteryLevel', 'difficultyLevel', 'status', 'attemptsCount', 'correctCount', 'lastReviewedAt', 'nextReviewDate', 'struggleNotes', 'updatedAt']);
+      allow delete: if isValidId(masteryId) && isSignedIn() && existing().userId == request.auth.uid;
+    }
+
+    match /audio_lectures/{lectureId} {
+      allow get: if isValidId(lectureId) && isSignedIn() && existing().userId == request.auth.uid;
+      allow list: if isSignedIn() && existing().userId == request.auth.uid;
+      allow create: if isValidId(lectureId)
+        && isSignedIn()
+        && isValidAudioLecture(incoming(), lectureId)
+        && incoming().keys().hasAll(['id', 'userId', 'notebookId', 'title', 'transcriptText', 'createdAt'])
+        && incoming().keys().hasOnly(['id', 'userId', 'notebookId', 'title', 'originalFilename', 'mimeType', 'fileSizeBytes', 'durationSeconds', 'transcriptText', 'transcriptSegments', 'speakerNotesAvailable', 'speakerNotesNotice', 'summary', 'keyConcepts', 'flashcards', 'quizQuestions', 'revisionNotes', 'createdAt']);
+      allow delete: if isValidId(lectureId) && isSignedIn() && existing().userId == request.auth.uid;
+    }
+  }
+}

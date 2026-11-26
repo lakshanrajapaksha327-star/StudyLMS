@@ -1,34 +1,54 @@
-import { Request, Response } from 'express';
+import { Request, Response, NextFunction } from 'express';
+import { DEFAULT_TEXT_MODEL } from '../config/ai_provider';
+import { ApiError } from '../middleware/validate.middleware';
 import { aiPromptRepository } from '../repositories/ai_prompt.repository';
+import { getAuthContext } from '../repositories/base.repository';
 
 export class AiPromptController {
-  public async getLogs(req: Request, res: Response) {
+  public async getLogs(req: Request, res: Response, next: NextFunction) {
     try {
-      const userId = (req.query.userId as string) || '1';
-      const logs = await aiPromptRepository.getLogsByUserId(userId);
-      const stats = await aiPromptRepository.getStats();
+      const auth = getAuthContext(req);
+      const [logs, stats] = await Promise.all([
+        aiPromptRepository.getLogsByUserId(auth),
+        aiPromptRepository.getStats(auth),
+      ]);
       res.json({ success: true, logs, stats });
-    } catch (error: any) {
-      res.status(500).json({ error: 'Failed to retrieve AI prompt logs' });
+    } catch (err) {
+      next(err);
     }
   }
 
-  public async logPrompt(req: Request, res: Response) {
+  public async logPrompt(req: Request, res: Response, next: NextFunction) {
     try {
-      const { userId = '1', feature, prompt, response, latencyMs = 0, costUsd = 0, tokensConsumed = 0, modelName = 'gemini-3.6-flash' } = req.body;
-      const log = await aiPromptRepository.logPrompt({
-        userId,
+      const auth = getAuthContext(req);
+      const {
         feature,
         prompt,
         response,
-        latencyMs,
-        costUsd,
-        tokensConsumed,
-        modelName,
-      });
-      res.json({ success: true, log });
-    } catch (error: any) {
-      res.status(500).json({ error: 'Failed to log AI prompt request' });
+        latencyMs = 0,
+        costUsd = 0,
+        tokensConsumed = 0,
+        modelName = DEFAULT_TEXT_MODEL,
+      } = req.body;
+
+      if (!feature) throw new ApiError(400, 'Feature name is required.');
+
+      const log = await aiPromptRepository.logPrompt(
+        {
+          userId: auth.userId,
+          feature,
+          prompt: prompt || '',
+          response: response || '',
+          latencyMs: Number(latencyMs) || 0,
+          costUsd: Number(costUsd) || 0,
+          tokensConsumed: Number(tokensConsumed) || 0,
+          modelName,
+        },
+        auth
+      );
+      res.status(201).json({ success: true, log });
+    } catch (err) {
+      next(err);
     }
   }
 }

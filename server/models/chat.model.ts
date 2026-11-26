@@ -1,3 +1,13 @@
+export interface ChatMessageCitation {
+  documentId: string;
+  documentTitle: string;
+  pageNumber?: number;
+  slideNumber?: number;
+  sectionHeading?: string;
+  excerpt: string;
+  score?: number;
+}
+
 export interface ChatMessageModel {
   id: string;
   sessionId?: string;
@@ -6,7 +16,7 @@ export interface ChatMessageModel {
   timestamp: string;
   sourcesUsed?: string[];
   suggestedQuestions?: string[];
-  citations?: string[];
+  citations?: ChatMessageCitation[];
   tokensConsumed?: number;
 }
 
@@ -29,16 +39,19 @@ export interface ChatRequest {
     title: string;
     content: string;
   }>;
+  selectedDocumentIds?: string[];
+  notebookId?: string;
   notebookTitle?: string;
   persona?: string;
   sessionId?: string;
+  strictGrounded?: boolean;
 }
 
 export interface ChatResponse {
   text: string;
   suggestedQuestions: string[];
   sourcesUsed: string[];
-  citations?: string[];
+  citations: ChatMessageCitation[];
   sessionId?: string;
+  grounded?: boolean;
 }
-

@@ -1,32 +1,35 @@
-import { Request, Response } from 'express';
+import { Request, Response, NextFunction } from 'express';
+import { ApiError } from '../middleware/validate.middleware';
+import { getAuthContext } from '../repositories/base.repository';
 import { recentDocumentRepository } from '../repositories/recent_document.repository';
 
 export class RecentDocumentsController {
-  public async getRecentDocuments(req: Request, res: Response) {
+  public async getRecentDocuments(req: Request, res: Response, next: NextFunction) {
     try {
-      const userId = (req.query.userId as string) || '1';
-      const items = await recentDocumentRepository.getRecentDocuments(userId);
+      const auth = getAuthContext(req);
+      const items = await recentDocumentRepository.getRecentDocuments(auth);
       res.json({ success: true, items });
-    } catch (error: any) {
-      res.status(500).json({ error: 'Failed to retrieve recent documents' });
+    } catch (err) {
+      next(err);
     }
   }
 
-  public async recordAccess(req: Request, res: Response) {
+  public async recordAccess(req: Request, res: Response, next: NextFunction) {
     try {
-      const { userId = '1', documentId, documentTitle, documentType = 'pdf' } = req.body;
+      const auth = getAuthContext(req);
+      const { documentId, documentTitle, documentType = 'pdf' } = req.body;
       if (!documentId || !documentTitle) {
-        return res.status(400).json({ error: 'documentId and documentTitle required' });
+        throw new ApiError(400, 'documentId and documentTitle are required.');
       }
       const entry = await recentDocumentRepository.recordAccess(
-        userId,
-        documentId,
-        documentTitle,
-        documentType
+        String(documentId),
+        String(documentTitle),
+        String(documentType),
+        auth
       );
       res.json({ success: true, entry });
-    } catch (error: any) {
-      res.status(500).json({ error: 'Failed to record document access' });
+    } catch (err) {
+      next(err);
     }
   }
 }

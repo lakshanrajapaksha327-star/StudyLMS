@@ -1,0 +1,594 @@
+{
+  "entities": {
+    "UserProfileDoc": {
+      "title": "UserProfileDoc",
+      "description": "Authenticated user profile and study progress metrics",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "email": { "type": "string", "maxLength": 320 },
+        "name": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "avatar": { "type": "string", "maxLength": 2048 },
+        "role": { "type": "string", "enum": ["Student", "Educator", "Admin"] },
+        "studyGoalMinutes": { "type": "number" },
+        "streakDays": { "type": "number" },
+        "cardsMastered": { "type": "number" },
+        "quizzesCompleted": { "type": "number" },
+        "timeSpentMinutes": { "type": "number" },
+        "status": { "type": "string", "enum": ["Active", "Suspended"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "email", "name", "role", "createdAt", "updatedAt"]
+    },
+    "UserPreferenceDoc": {
+      "title": "UserPreferenceDoc",
+      "description": "User interface and AI model preferences",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "theme": { "type": "string", "enum": ["light", "dark", "system"] },
+        "aiModelPreference": { "type": "string", "maxLength": 100 },
+        "defaultCardCount": { "type": "number" },
+        "socraticTutorMode": { "type": "boolean" },
+        "autoSummarize": { "type": "boolean" },
+        "language": { "type": "string", "maxLength": 30 },
+        "fontSize": { "type": "string", "enum": ["small", "medium", "large"] },
+        "notificationsEnabled": { "type": "boolean" },
+        "privacyMode": { "type": "boolean" },
+        "defaultPersona": { "type": "string", "maxLength": 64 },
+        "onboardingDismissed": { "type": "boolean" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "theme", "aiModelPreference", "updatedAt"]
+    },
+    "NotebookDoc": {
+      "title": "NotebookDoc",
+      "description": "User study notebook organizing sources, notes, flashcards, and quizzes",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "userId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "title": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "description": { "type": "string", "maxLength": 2000 },
+        "color": { "type": "string", "maxLength": 80 },
+        "createdAt": { "type": "string", "maxLength": 64 },
+        "updatedAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["id", "userId", "title", "createdAt", "updatedAt"]
+    },
+    "SourceDocumentDoc": {
+      "title": "SourceDocumentDoc",
+      "description": "Uploaded study document metadata, extraction output, and processing status",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "userId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "notebookId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "title": { "type": "string", "minLength": 1, "maxLength": 300 },
+        "originalFilename": { "type": "string", "maxLength": 300 },
+        "type": { "type": "string", "maxLength": 32 },
+        "mimeType": { "type": "string", "maxLength": 128 },
+        "fileSizeBytes": { "type": "number" },
+        "fileSize": { "type": "string", "maxLength": 40 },
+        "storageRef": { "type": "string", "maxLength": 256 },
+        "blobChunkCount": { "type": "number" },
+        "processingStatus": {
+          "type": "string",
+          "enum": ["uploaded", "validating", "extracting", "ocr_processing", "chunking", "embedding", "indexing", "ready", "partially_processed", "failed"]
+        },
+        "progressPercent": { "type": "number" },
+        "chunkCount": { "type": "number" },
+        "pageCount": { "type": "number" },
+        "embeddingModel": { "type": "string", "maxLength": 80 },
+        "ocrWarnings": { "type": "string", "maxLength": 2000 },
+        "errorMessage": { "type": "string", "maxLength": 1000 },
+        "content": { "type": "string", "maxLength": 700000 },
+        "summary": { "type": "string", "maxLength": 20000 },
+        "keyConcepts": { "type": "array" },
+        "addedAt": { "type": "string", "maxLength": 64 },
+        "updatedAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["id", "userId", "notebookId", "title", "type", "processingStatus", "content", "addedAt"]
+    },
+    "DocumentChunkDoc": {
+      "title": "DocumentChunkDoc",
+      "description": "Chunked section of a document with page/slide metadata and vector embedding",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "userId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "notebookId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "documentId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "chunkIndex": { "type": "number" },
+        "content": { "type": "string", "minLength": 1, "maxLength": 20000 },
+        "contentHash": { "type": "string", "maxLength": 128 },
+        "pageNumber": { "type": "number" },
+        "slideNumber": { "type": "number" },
+        "sectionHeading": { "type": "string", "maxLength": 300 },
+        "sourceTitle": { "type": "string", "maxLength": 300 },
+        "tokenCount": { "type": "number" },
+        "embedding": { "type": "array" },
+        "embeddingModel": { "type": "string", "maxLength": 80 },
+        "createdAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["id", "userId", "notebookId", "documentId", "chunkIndex", "content", "createdAt"]
+    },
+    "DocumentBlobDoc": {
+      "title": "DocumentBlobDoc",
+      "description": "Persistent chunked binary original document payload",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "userId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "documentId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "chunkIndex": { "type": "number" },
+        "totalChunks": { "type": "number" },
+        "mimeType": { "type": "string", "maxLength": 128 },
+        "originalFilename": { "type": "string", "maxLength": 300 },
+        "dataBase64": { "type": "string", "maxLength": 850000 },
+        "createdAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["id", "userId", "documentId", "chunkIndex", "totalChunks", "dataBase64", "createdAt"]
+    },
+    "StudyNoteDoc": {
+      "title": "StudyNoteDoc",
+      "description": "User rich markdown study note",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "userId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "notebookId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "title": { "type": "string", "minLength": 1, "maxLength": 300 },
+        "content": { "type": "string", "maxLength": 300000 },
+        "tags": { "type": "array" },
+        "aiGenerated": { "type": "boolean" },
+        "createdAt": { "type": "string", "maxLength": 64 },
+        "updatedAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["id", "userId", "notebookId", "title", "content", "updatedAt"]
+    },
+    "NoteVersionDoc": {
+      "title": "NoteVersionDoc",
+      "description": "Historical snapshot of a study note",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "userId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "noteId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "title": { "type": "string", "maxLength": 300 },
+        "content": { "type": "string", "maxLength": 300000 },
+        "savedAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["id", "userId", "noteId", "title", "content", "savedAt"]
+    },
+    "FlashcardSetDoc": {
+      "title": "FlashcardSetDoc",
+      "description": "Deck of study flashcards with SM-2 and Leitner metadata",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "userId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "notebookId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "title": { "type": "string", "minLength": 1, "maxLength": 300 },
+        "description": { "type": "string", "maxLength": 1000 },
+        "category": { "type": "string", "maxLength": 100 },
+        "cards": { "type": "array" },
+        "createdAt": { "type": "string", "maxLength": 64 },
+        "updatedAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["id", "userId", "notebookId", "title", "cards", "createdAt"]
+    },
+    "QuizSetDoc": {
+      "title": "QuizSetDoc",
+      "description": "Practice quiz set with questions and answer explanations",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "userId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "notebookId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "title": { "type": "string", "minLength": 1, "maxLength": 300 },
+        "description": { "type": "string", "maxLength": 1000 },
+        "difficulty": { "type": "string", "enum": ["easy", "medium", "hard"] },
+        "bestScore": { "type": "number" },
+        "questions": { "type": "array" },
+        "createdAt": { "type": "string", "maxLength": 64 },
+        "updatedAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["id", "userId", "notebookId", "title", "questions", "createdAt"]
+    },
+    "QuizAttemptDoc": {
+      "title": "QuizAttemptDoc",
+      "description": "Recorded quiz submission attempt",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "userId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "quizSetId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "quizTitle": { "type": "string", "maxLength": 300 },
+        "score": { "type": "number" },
+        "scorePercent": { "type": "number" },
+        "totalQuestions": { "type": "number" },
+        "correctCount": { "type": "number" },
+        "timeTakenSeconds": { "type": "number" },
+        "answers": { "type": "object" },
+        "completedAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["id", "userId", "quizSetId", "score", "totalQuestions", "correctCount", "completedAt"]
+    },
+    "ChatSessionDoc": {
+      "title": "ChatSessionDoc",
+      "description": "Persistent AI tutor chat session and messages",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "userId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "notebookId": { "type": "string", "maxLength": 128 },
+        "title": { "type": "string", "minLength": 1, "maxLength": 300 },
+        "persona": { "type": "string", "maxLength": 64 },
+        "isArchived": { "type": "boolean" },
+        "messages": { "type": "array" },
+        "createdAt": { "type": "string", "maxLength": 64 },
+        "updatedAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["id", "userId", "title", "persona", "messages", "createdAt", "updatedAt"]
+    },
+    "StudyPlanDoc": {
+      "title": "StudyPlanDoc",
+      "description": "AI-generated day-by-day study roadmap",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "userId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "title": { "type": "string", "minLength": 1, "maxLength": 300 },
+        "examDate": { "type": "string", "maxLength": 32 },
+        "hoursPerDay": { "type": "number" },
+        "overallProgress": { "type": "number" },
+        "subjects": { "type": "array" },
+        "weakTopics": { "type": "array" },
+        "strongTopics": { "type": "array" },
+        "preferredStudyTime": { "type": "string", "maxLength": 40 },
+        "prioritizedTopics": { "type": "array" },
+        "adaptiveTips": { "type": "array" },
+        "schedule": { "type": "array" },
+        "createdAt": { "type": "string", "maxLength": 64 },
+        "updatedAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["id", "userId", "title", "examDate", "schedule", "createdAt", "updatedAt"]
+    },
+    "StudyTaskDoc": {
+      "title": "StudyTaskDoc",
+      "description": "Individual scheduled study task",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "userId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "title": { "type": "string", "minLength": 1, "maxLength": 300 },
+        "subject": { "type": "string", "maxLength": 120 },
+        "scheduledDate": { "type": "string", "maxLength": 32 },
+        "durationMinutes": { "type": "number" },
+        "completed": { "type": "boolean" },
+        "priority": { "type": "string", "enum": ["low", "medium", "high"] },
+        "taskType": { "type": "string", "maxLength": 40 },
+        "createdAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["id", "userId", "title", "completed", "createdAt"]
+    },
+    "NotificationDoc": {
+      "title": "NotificationDoc",
+      "description": "User notification entry",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "userId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "title": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "message": { "type": "string", "maxLength": 1000 },
+        "type": { "type": "string", "enum": ["reminder", "exam", "flashcard", "streak", "document"] },
+        "read": { "type": "boolean" },
+        "createdAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["id", "userId", "title", "message", "type", "read", "createdAt"]
+    },
+    "SearchHistoryDoc": {
+      "title": "SearchHistoryDoc",
+      "description": "User search query history entry",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "userId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "keyword": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "category": { "type": "string", "maxLength": 40 },
+        "resultCount": { "type": "number" },
+        "createdAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["id", "userId", "keyword", "createdAt"]
+    },
+    "RecentDocumentDoc": {
+      "title": "RecentDocumentDoc",
+      "description": "Recently opened document tracker",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "userId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "documentId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "documentTitle": { "type": "string", "maxLength": 300 },
+        "documentType": { "type": "string", "maxLength": 32 },
+        "openedAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["id", "userId", "documentId", "documentTitle", "openedAt"]
+    },
+    "DocumentAnnotationDoc": {
+      "title": "DocumentAnnotationDoc",
+      "description": "Persisted sticky notes, highlights, and annotations attached to source documents",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "userId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "documentId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "notebookId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "pageNumber": { "type": "number" },
+        "content": { "type": "string", "minLength": 1, "maxLength": 4000 },
+        "type": { "type": "string", "enum": ["sticky_note", "highlight", "bookmark"] },
+        "createdAt": { "type": "string", "maxLength": 64 },
+        "updatedAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["id", "userId", "documentId", "notebookId", "content", "type", "createdAt"]
+    },
+    "AiUsageLogDoc": {
+      "title": "AiUsageLogDoc",
+      "description": "AI API usage, latency, provider, and token telemetry per user",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "userId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "feature": { "type": "string", "maxLength": 64 },
+        "provider": { "type": "string", "maxLength": 32 },
+        "prompt": { "type": "string", "maxLength": 2000 },
+        "response": { "type": "string", "maxLength": 2000 },
+        "latencyMs": { "type": "number" },
+        "inputTokens": { "type": "number" },
+        "outputTokens": { "type": "number" },
+        "costUsd": { "type": "number" },
+        "tokensConsumed": { "type": "number" },
+        "modelName": { "type": "string", "maxLength": 80 },
+        "status": { "type": "string", "enum": ["success", "fallback_success", "cached", "error"] },
+        "errorCategory": { "type": "string", "maxLength": 64 },
+        "cached": { "type": "boolean" },
+        "fallbackUsed": { "type": "boolean" },
+        "createdAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["id", "userId", "feature", "modelName", "createdAt"]
+    },
+    "ActivityLogDoc": {
+      "title": "ActivityLogDoc",
+      "description": "User study activity feed item",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "userId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "type": { "type": "string", "enum": ["source_added", "quiz_completed", "flashcard_review", "ai_note_generated", "chat_query", "summary_generated", "planner_completed", "study_session", "exam_prep", "adaptive_tutor", "audio_lecture", "diagram_created"] },
+        "title": { "type": "string", "maxLength": 300 },
+        "details": { "type": "string", "maxLength": 1000 },
+        "score": { "type": "string", "maxLength": 40 },
+        "timestamp": { "type": "string", "maxLength": 64 },
+        "createdAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["id", "userId", "type", "title", "createdAt"]
+    },
+    "StudySessionDoc": {
+      "title": "StudySessionDoc",
+      "description": "Persisted active study session tracking active duration excluding paused time",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "userId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "notebookId": { "type": "string", "maxLength": 128 },
+        "subject": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "activityType": { "type": "string", "maxLength": 40 },
+        "startedAt": { "type": "string", "maxLength": 64 },
+        "endedAt": { "type": "string", "maxLength": 64 },
+        "activeDurationSeconds": { "type": "number" },
+        "pausedSeconds": { "type": "number" },
+        "notes": { "type": "string", "maxLength": 1000 },
+        "createdAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["id", "userId", "subject", "startedAt", "endedAt", "activeDurationSeconds", "createdAt"]
+    },
+    "VisualDiagramDoc": {
+      "title": "VisualDiagramDoc",
+      "description": "Editable visual learning diagram with interactive nodes/edges and Mermaid specification",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "userId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "notebookId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "title": { "type": "string", "minLength": 1, "maxLength": 300 },
+        "diagramType": { "type": "string", "maxLength": 40 },
+        "description": { "type": "string", "maxLength": 2000 },
+        "nodes": { "type": "array" },
+        "edges": { "type": "array" },
+        "mermaidSyntax": { "type": "string", "maxLength": 30000 },
+        "createdAt": { "type": "string", "maxLength": 64 },
+        "updatedAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["id", "userId", "notebookId", "title", "diagramType", "nodes", "edges", "createdAt", "updatedAt"]
+    },
+    "ExamPrepGuideDoc": {
+      "title": "ExamPrepGuideDoc",
+      "description": "Smart Exam Preparation guide grounded in syllabus, notes, and past papers",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "userId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "notebookId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "subject": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "examDate": { "type": "string", "maxLength": 32 },
+        "syllabusSummary": { "type": "string", "maxLength": 20000 },
+        "topicPlan": { "type": "array" },
+        "importantConcepts": { "type": "array" },
+        "recurringThemes": { "type": "array" },
+        "likelyTopics": { "type": "array" },
+        "practiceQuestions": { "type": "array" },
+        "formulaSheet": { "type": "array" },
+        "revisionChecklist": { "type": "array" },
+        "mockExamQuestions": { "type": "array" },
+        "evidenceSources": { "type": "array" },
+        "uncertaintyNotice": { "type": "string", "maxLength": 1000 },
+        "createdAt": { "type": "string", "maxLength": 64 },
+        "updatedAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["id", "userId", "notebookId", "subject", "examDate", "createdAt", "updatedAt"]
+    },
+    "TopicMasteryDoc": {
+      "title": "TopicMasteryDoc",
+      "description": "Persistent adaptive topic mastery and spaced revision record",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "userId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "notebookId": { "type": "string", "maxLength": 128 },
+        "subject": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "topic": { "type": "string", "minLength": 1, "maxLength": 250 },
+        "masteryLevel": { "type": "number" },
+        "difficultyLevel": { "type": "string", "enum": ["foundational", "intermediate", "advanced"] },
+        "status": { "type": "string", "enum": ["struggling", "learning", "proficient", "mastered"] },
+        "attemptsCount": { "type": "number" },
+        "correctCount": { "type": "number" },
+        "lastReviewedAt": { "type": "string", "maxLength": 64 },
+        "nextReviewDate": { "type": "string", "maxLength": 64 },
+        "struggleNotes": { "type": "string", "maxLength": 1000 },
+        "createdAt": { "type": "string", "maxLength": 64 },
+        "updatedAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["id", "userId", "subject", "topic", "masteryLevel", "difficultyLevel", "status", "nextReviewDate", "updatedAt"]
+    },
+    "AudioLectureDoc": {
+      "title": "AudioLectureDoc",
+      "description": "Transcribed audio lecture with timestamped segments, notes, flashcards, and quiz questions",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "userId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "notebookId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "title": { "type": "string", "minLength": 1, "maxLength": 300 },
+        "originalFilename": { "type": "string", "maxLength": 300 },
+        "mimeType": { "type": "string", "maxLength": 128 },
+        "fileSizeBytes": { "type": "number" },
+        "durationSeconds": { "type": "number" },
+        "transcriptText": { "type": "string", "maxLength": 200000 },
+        "transcriptSegments": { "type": "array" },
+        "speakerNotesAvailable": { "type": "boolean" },
+        "speakerNotesNotice": { "type": "string", "maxLength": 500 },
+        "summary": { "type": "string", "maxLength": 20000 },
+        "keyConcepts": { "type": "array" },
+        "flashcards": { "type": "array" },
+        "quizQuestions": { "type": "array" },
+        "revisionNotes": { "type": "string", "maxLength": 40000 },
+        "createdAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["id", "userId", "notebookId", "title", "transcriptText", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserProfileDoc" },
+      "description": "Authenticated user profile documents"
+    },
+    "/user_preferences/{userId}": {
+      "schema": { "$ref": "#/entities/UserPreferenceDoc" },
+      "description": "User settings and model preferences"
+    },
+    "/notebooks/{notebookId}": {
+      "schema": { "$ref": "#/entities/NotebookDoc" },
+      "description": "User study notebooks"
+    },
+    "/documents/{documentId}": {
+      "schema": { "$ref": "#/entities/SourceDocumentDoc" },
+      "description": "Uploaded study documents and extraction metadata"
+    },
+    "/document_chunks/{chunkId}": {
+      "schema": { "$ref": "#/entities/DocumentChunkDoc" },
+      "description": "Chunked passages and vector embeddings"
+    },
+    "/document_blobs/{blobId}": {
+      "schema": { "$ref": "#/entities/DocumentBlobDoc" },
+      "description": "Chunked base64 payloads of uploaded original documents"
+    },
+    "/study_notes/{noteId}": {
+      "schema": { "$ref": "#/entities/StudyNoteDoc" },
+      "description": "User study notes"
+    },
+    "/note_versions/{versionId}": {
+      "schema": { "$ref": "#/entities/NoteVersionDoc" },
+      "description": "Historical note snapshots"
+    },
+    "/flashcard_sets/{setId}": {
+      "schema": { "$ref": "#/entities/FlashcardSetDoc" },
+      "description": "Flashcard decks"
+    },
+    "/quiz_sets/{quizId}": {
+      "schema": { "$ref": "#/entities/QuizSetDoc" },
+      "description": "Practice quizzes"
+    },
+    "/quiz_attempts/{attemptId}": {
+      "schema": { "$ref": "#/entities/QuizAttemptDoc" },
+      "description": "Quiz attempt records"
+    },
+    "/chat_sessions/{sessionId}": {
+      "schema": { "$ref": "#/entities/ChatSessionDoc" },
+      "description": "Persistent AI study chat sessions"
+    },
+    "/study_plans/{planId}": {
+      "schema": { "$ref": "#/entities/StudyPlanDoc" },
+      "description": "AI study plans"
+    },
+    "/study_tasks/{taskId}": {
+      "schema": { "$ref": "#/entities/StudyTaskDoc" },
+      "description": "Scheduled study tasks"
+    },
+    "/notifications/{notificationId}": {
+      "schema": { "$ref": "#/entities/NotificationDoc" },
+      "description": "User notifications"
+    },
+    "/search_history/{entryId}": {
+      "schema": { "$ref": "#/entities/SearchHistoryDoc" },
+      "description": "Search history"
+    },
+    "/recent_documents/{entryId}": {
+      "schema": { "$ref": "#/entities/RecentDocumentDoc" },
+      "description": "Recently opened documents"
+    },
+    "/document_annotations/{annotationId}": {
+      "schema": { "$ref": "#/entities/DocumentAnnotationDoc" },
+      "description": "Persisted sticky notes, highlights, and bookmarks on documents"
+    },
+    "/ai_usage_logs/{logId}": {
+      "schema": { "$ref": "#/entities/AiUsageLogDoc" },
+      "description": "AI request usage logs"
+    },
+    "/activity_logs/{logId}": {
+      "schema": { "$ref": "#/entities/ActivityLogDoc" },
+      "description": "Study activity logs"
+    },
+    "/study_sessions/{sessionId}": {
+      "schema": { "$ref": "#/entities/StudySessionDoc" },
+      "description": "Tracked study sessions"
+    },
+    "/diagrams/{diagramId}": {
+      "schema": { "$ref": "#/entities/VisualDiagramDoc" },
+      "description": "Editable concept maps and diagrams"
+    },
+    "/exam_prep_guides/{guideId}": {
+      "schema": { "$ref": "#/entities/ExamPrepGuideDoc" },
+      "description": "Smart exam preparation guides"
+    },
+    "/topic_mastery/{masteryId}": {
+      "schema": { "$ref": "#/entities/TopicMasteryDoc" },
+      "description": "Adaptive learning topic mastery and spaced revision schedules"
+    },
+    "/audio_lectures/{lectureId}": {
+      "schema": { "$ref": "#/entities/AudioLectureDoc" },
+      "description": "Transcribed audio lectures and generated study packs"
+    }
+  }
+}

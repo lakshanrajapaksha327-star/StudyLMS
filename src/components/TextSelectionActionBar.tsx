@@ -1,5 +1,17 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Sparkles, HelpCircle, RefreshCw, Languages, X, Check, Copy } from 'lucide-react';
+import {
+  Sparkles,
+  HelpCircle,
+  RefreshCw,
+  Languages,
+  X,
+  Check,
+  Copy,
+  FileText,
+  Wand2,
+  ListChecks,
+  Maximize2,
+} from 'lucide-react';
 import { transformSelectedText } from '../services/api';
 
 interface TextSelectionActionBarProps {
@@ -29,17 +41,16 @@ export const TextSelectionActionBar: React.FC<TextSelectionActionBarProps> = ({
       }
 
       const text = selection.toString().trim();
-      if (text.length < 5) return; // Only trigger for meaningful selections
+      if (text.length < 5) return;
 
       setSelectedText(text);
 
       const range = selection.getRangeAt(0);
       const rect = range.getBoundingClientRect();
 
-      // Position above selected text
       setPosition({
-        top: Math.max(10, rect.top + window.scrollY - 52),
-        left: Math.max(10, rect.left + window.scrollX + rect.width / 2 - 140),
+        top: Math.max(10, rect.top - 54),
+        left: Math.max(10, Math.min(window.innerWidth - 460, rect.left + rect.width / 2 - 210)),
       });
     };
 
@@ -50,7 +61,7 @@ export const TextSelectionActionBar: React.FC<TextSelectionActionBarProps> = ({
   }, [resultText, loading]);
 
   const handleTransform = async (
-    action: 'explain' | 'rewrite' | 'translate',
+    action: 'explain' | 'rewrite' | 'translate' | 'simplify' | 'summarize' | 'expand' | 'key_points',
     option: string = 'Standard'
   ) => {
     if (!selectedText) return;
@@ -60,8 +71,8 @@ export const TextSelectionActionBar: React.FC<TextSelectionActionBarProps> = ({
     try {
       const res = await transformSelectedText(selectedText, action, option);
       setResultText(res.resultText);
-    } catch (err) {
-      setResultText('Failed to process selected text.');
+    } catch (err: any) {
+      setResultText(err?.message || 'Failed to process selected text.');
     } finally {
       setLoading(false);
     }
@@ -79,10 +90,10 @@ export const TextSelectionActionBar: React.FC<TextSelectionActionBarProps> = ({
     <div
       ref={menuRef}
       style={{ top: `${position.top}px`, left: `${position.left}px` }}
-      className="fixed z-50 bg-slate-900/95 text-white backdrop-blur-md border border-slate-700/80 shadow-2xl rounded-2xl p-1.5 flex flex-col gap-2 max-w-md transition-all animate-in fade-in zoom-in-95 duration-150"
+      className="fixed z-50 bg-slate-900/95 text-white backdrop-blur-md border border-slate-700/80 shadow-2xl rounded-2xl p-1.5 flex flex-col gap-2 max-w-xl transition-all"
     >
       {!resultText ? (
-        <div className="flex items-center gap-1 text-xs">
+        <div className="flex flex-wrap items-center gap-1 text-xs">
           <button
             onClick={() => handleTransform('explain')}
             disabled={loading}
@@ -92,14 +103,45 @@ export const TextSelectionActionBar: React.FC<TextSelectionActionBarProps> = ({
             Explain
           </button>
 
-          {/* Rewrite Dropdown */}
+          <button
+            onClick={() => handleTransform('simplify')}
+            disabled={loading}
+            className="px-2 py-1.5 rounded-xl hover:bg-slate-800 font-semibold text-slate-200 flex items-center gap-1"
+          >
+            <Wand2 className="w-3.5 h-3.5 text-amber-400" /> Simplify
+          </button>
+
+          <button
+            onClick={() => handleTransform('summarize')}
+            disabled={loading}
+            className="px-2 py-1.5 rounded-xl hover:bg-slate-800 font-semibold text-slate-200 flex items-center gap-1"
+          >
+            <FileText className="w-3.5 h-3.5 text-cyan-400" /> Summarize
+          </button>
+
+          <button
+            onClick={() => handleTransform('expand')}
+            disabled={loading}
+            className="px-2 py-1.5 rounded-xl hover:bg-slate-800 font-semibold text-slate-200 flex items-center gap-1"
+          >
+            <Maximize2 className="w-3.5 h-3.5 text-blue-400" /> Expand
+          </button>
+
+          <button
+            onClick={() => handleTransform('key_points')}
+            disabled={loading}
+            className="px-2 py-1.5 rounded-xl hover:bg-slate-800 font-semibold text-slate-200 flex items-center gap-1"
+          >
+            <ListChecks className="w-3.5 h-3.5 text-pink-400" /> Key Points
+          </button>
+
           <div className="relative">
             <button
               onClick={() => {
                 setShowStyleMenu(!showStyleMenu);
                 setShowLangMenu(false);
               }}
-              className="px-2.5 py-1.5 rounded-xl hover:bg-slate-800 font-semibold text-slate-200 flex items-center gap-1 transition-all"
+              className="px-2 py-1.5 rounded-xl hover:bg-slate-800 font-semibold text-slate-200 flex items-center gap-1 transition-all"
             >
               <RefreshCw className="w-3.5 h-3.5 text-purple-400" /> Rewrite
             </button>
@@ -119,14 +161,13 @@ export const TextSelectionActionBar: React.FC<TextSelectionActionBarProps> = ({
             )}
           </div>
 
-          {/* Translate Dropdown */}
           <div className="relative">
             <button
               onClick={() => {
                 setShowLangMenu(!showLangMenu);
                 setShowStyleMenu(false);
               }}
-              className="px-2.5 py-1.5 rounded-xl hover:bg-slate-800 font-semibold text-slate-200 flex items-center gap-1 transition-all"
+              className="px-2 py-1.5 rounded-xl hover:bg-slate-800 font-semibold text-slate-200 flex items-center gap-1 transition-all"
             >
               <Languages className="w-3.5 h-3.5 text-emerald-400" /> Translate
             </button>
