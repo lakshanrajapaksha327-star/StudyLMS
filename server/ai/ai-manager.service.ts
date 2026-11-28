@@ -2,7 +2,7 @@ import crypto from 'crypto';
 import { ZodType } from 'zod';
 import { aiPromptRepository } from '../repositories/ai_prompt.repository';
 import { AuthContext } from '../repositories/base.repository';
-import { AiProviderId, AiServiceError, classifyProviderError } from './ai-errors';
+import { AiErrorCategory, AiProviderId, AiServiceError, classifyProviderError } from './ai-errors';
 import {
   AiEmbeddingResult,
   AiGenerateRequest,
@@ -19,6 +19,7 @@ import { RetryService, retryService } from './retry.service';
 import { anthropicProvider } from './providers/anthropic.provider';
 import { geminiProvider } from './providers/gemini.provider';
 import { openAiProvider } from './providers/openai.provider';
+import { userPreferencesRepository } from '../repositories/user_preferences.repository';
 
 interface CacheEntry {
   value: AiManagedResponse;
@@ -44,6 +45,25 @@ export interface AiRecentEventRecord {
   inputTokens: number | null;
   outputTokens: number | null;
   totalTokens: number | null;
+  costUsd: number | null;
+}
+
+export interface AiProviderDiagnosticResult {
+  id: AiProviderId;
+  displayName: string;
+  diagnosticState:
+    | 'configured'
+    | 'not_configured'
+    | 'connection_verified'
+    | 'temporarily_unavailable'
+    | 'circuit_open'
+    | 'auth_failure';
+  activeModels: Record<string, string>;
+  latencyMs: number | null;
+  circuitState: 'closed' | 'open' | 'half_open';
+  errorCategory?: AiErrorCategory | null;
+  message: string;
+  checkedAt: string;
 }
 
 export function stripMarkdownJsonFences(raw: string): string {
@@ -73,6 +93,7 @@ export class AiManagerService {
   private readonly router: AiRouterService;
   private readonly cache = new Map<string, CacheEntry>();
   private readonly userBuckets = new Map<string, UserRateBucket>();
+  private readonly privacyCache = new Map<string, { privacyMode: boolean; expiresAt: number }>();
   private readonly recentEvents: AiRecentEventRecord[] = [];
   private readonly maxRecentEvents = 120;
 
@@ -94,6 +115,26 @@ export class AiManagerService {
     this.circuitBreaker = deps?.circuitBreaker ?? circuitBreakerService;
     this.retryService = deps?.retryService ?? retryService;
     this.router = deps?.router ?? aiRouterService;
+  }
+
+  public setUserPrivacyCache(userId: string, privacyMode: boolean): void {
+    this.privacyCache.set(userId, { privacyMode, expiresAt: Date.now() + 5 * 60_000 });
+  }
+
+  private async isPrivacyModeEnabled(auth?: AuthContext): Promise<boolean> {
+    if (!auth?.userId || !auth.idToken) return false;
+    const cached = this.privacyCache.get(auth.userId);
+    if (cached && Date.now() < cached.expiresAt) {
+      return cached.privacyMode;
+    }
+    try {
+      const prefs = await userPreferencesRepository.getByUserId(auth);
+      const enabled = Boolean(prefs?.privacyMode);
+      this.setUserPrivacyCache(auth.userId, enabled);
+      return enabled;
+    } catch {
+      return false;
+    }
   }
 
   private getTodayKey(): string {
@@ -196,19 +237,9 @@ export class AiManagerService {
     this.cache.set(key, { value, expiresAt: Date.now() + ttlMs });
   }
 
-  private sanitizeTelemetryText(text: string): string {
-    return String(text || '')
-      .replace(/Bearer\s+[A-Za-z0-9\-._~+/]+=*/gi, 'Bearer [REDACTED]')
-      .replace(/AIza[0-9A-Za-z\-_]{20,}/g, '[REDACTED_GEMINI_KEY]')
-      .replace(/sk-(?:proj-|ant-)?[0-9A-Za-z\-_]{16,}/g, '[REDACTED_API_KEY]')
-      .slice(0, 1800);
-  }
-
   private recordTelemetry(params: {
     auth?: AuthContext;
     feature: string;
-    promptSummary?: string;
-    responseText: string;
     provider: AiProviderId;
     model: string;
     latencyMs: number;
@@ -222,11 +253,6 @@ export class AiManagerService {
     fallbackUsed: boolean;
   }): void {
     const uid = params.auth?.userId || 'system';
-    const safeResponse =
-      params.status === 'error'
-        ? this.sanitizeTelemetryText(params.responseText)
-        : params.responseText.slice(0, 1800);
-
     const event: AiRecentEventRecord = {
       timestamp: new Date().toISOString(),
       userId: uid,
@@ -239,6 +265,7 @@ export class AiManagerService {
       inputTokens: params.inputTokens,
       outputTokens: params.outputTokens,
       totalTokens: params.totalTokens,
+      costUsd: params.actualCostUsd ?? null,
     };
     this.recentEvents.unshift(event);
     if (this.recentEvents.length > this.maxRecentEvents) {
@@ -246,27 +273,30 @@ export class AiManagerService {
     }
 
     if (params.auth) {
-      void aiPromptRepository
-        .logPrompt(
-          {
-            userId: params.auth.userId,
-            feature: params.feature as any,
-            provider: params.provider,
-            prompt: this.sanitizeTelemetryText(params.promptSummary || 'AI Generation'),
-            response: safeResponse,
-            latencyMs: params.latencyMs,
-            inputTokens: params.inputTokens,
-            outputTokens: params.outputTokens,
-            costUsd: params.actualCostUsd ?? 0,
-            tokensConsumed: params.totalTokens ?? 0,
-            modelName: params.model,
-            status: params.status,
-            errorCategory: params.errorCategory,
-            cached: params.cached,
-            fallbackUsed: params.fallbackUsed,
-          },
-          params.auth
-        )
+      void this.isPrivacyModeEnabled(params.auth)
+        .then((privacyEnabled) => {
+          if (privacyEnabled) {
+            return;
+          }
+          return aiPromptRepository.logPrompt(
+            {
+              userId: params.auth!.userId,
+              feature: params.feature,
+              provider: params.provider,
+              latencyMs: params.latencyMs,
+              inputTokens: params.inputTokens,
+              outputTokens: params.outputTokens,
+              costUsd: params.actualCostUsd ?? null,
+              tokensConsumed: params.totalTokens ?? 0,
+              modelName: params.model,
+              status: params.status,
+              errorCategory: params.errorCategory,
+              cached: params.cached,
+              fallbackUsed: params.fallbackUsed,
+            },
+            params.auth!
+          );
+        })
         .catch(() => {});
     }
   }
@@ -290,15 +320,13 @@ export class AiManagerService {
         this.recordTelemetry({
           auth: req.auth,
           feature: req.feature,
-          promptSummary: req.promptSummary,
-          responseText: hit.text,
           provider: hit.provider,
           model: hit.model,
           latencyMs: 1,
           inputTokens: 0,
           outputTokens: 0,
           totalTokens: 0,
-          actualCostUsd: 0,
+          actualCostUsd: hit.usage.actualCostUsd ?? null,
           status: 'cached',
           cached: true,
           fallbackUsed: hit.fallbackUsed,
@@ -317,7 +345,6 @@ export class AiManagerService {
       );
 
       if (candidates.length === 0) {
-        // Distinguish unconfigured providers vs open circuit breakers
         const configuredAny = Array.from(this.adapters.values()).some(
           (a) => a.isConfigured() && a.supportsTask(req.taskType)
         );
@@ -371,15 +398,13 @@ export class AiManagerService {
           this.recordTelemetry({
             auth: req.auth,
             feature: req.feature,
-            promptSummary: req.promptSummary,
-            responseText: managed.text,
             provider: managed.provider,
             model: managed.model,
             latencyMs: managed.latencyMs,
             inputTokens: managed.usage.inputTokens,
             outputTokens: managed.usage.outputTokens,
             totalTokens: managed.usage.totalTokens,
-            actualCostUsd: managed.usage.actualCostUsd,
+            actualCostUsd: managed.usage.actualCostUsd ?? null,
             status: fallbackUsed ? 'fallback_success' : 'success',
             cached: false,
             fallbackUsed,
@@ -391,13 +416,10 @@ export class AiManagerService {
           lastError = classified;
           this.circuitBreaker.recordFailure(candidate.adapter.id, classified.category);
 
-          // Stop immediately if error is a permanent prompt/auth bug — don't mask it by switching providers
           if (!classified.switchProviderAllowed) {
             this.recordTelemetry({
               auth: req.auth,
               feature: req.feature,
-              promptSummary: req.promptSummary,
-              responseText: classified.message,
               provider: candidate.adapter.id,
               model: candidate.model,
               latencyMs: 0,
@@ -428,8 +450,6 @@ export class AiManagerService {
       this.recordTelemetry({
         auth: req.auth,
         feature: req.feature,
-        promptSummary: req.promptSummary,
-        responseText: finalErr.message,
         provider: finalErr.provider || modelRegistry.getPrimaryProviderId(),
         model: req.preferredModel || 'unknown',
         latencyMs: 0,
@@ -469,7 +489,6 @@ export class AiManagerService {
       const validated = schema.parse(parsed);
       return { data: validated, meta: first };
     } catch (parseErr: any) {
-      // Controlled single repair pass: feed validation error back to repair malformed JSON
       const repairPrompt = `Your previous response could not be parsed or failed schema validation (${String(
         parseErr?.message || 'Invalid JSON'
       ).slice(0, 300)}).
@@ -509,53 +528,48 @@ ${first.text.slice(0, 6000)}`;
 
   public async embedTexts(
     texts: string[],
-    taskType: 'RETRIEVAL_DOCUMENT' | 'RETRIEVAL_QUERY' = 'RETRIEVAL_DOCUMENT'
+    taskType: 'RETRIEVAL_DOCUMENT' | 'RETRIEVAL_QUERY' = 'RETRIEVAL_DOCUMENT',
+    preferredProvider?: AiProviderId
   ): Promise<AiEmbeddingResult> {
-    const candidates = this.router.buildProviderOrder(
-      this.adapters,
-      'embeddings',
-      undefined,
-      this.circuitBreaker
-    );
+    const targetProvider = preferredProvider || modelRegistry.getCanonicalEmbeddingProvider();
+    const adapter = this.adapters.get(targetProvider);
 
-    if (candidates.length === 0) {
+    // Strictly enforce canonical embedding vector-space isolation:
+    // never silently fall back to a different embedding provider's vector space!
+    if (!adapter || !adapter.isConfigured() || !adapter.embedTexts) {
       throw new AiServiceError({
-        message: 'No configured AI embedding provider is currently available.',
+        message: `Canonical embedding provider "${targetProvider}" is not configured or unavailable.`,
         statusCode: 503,
         category: 'provider_unavailable',
         retryable: false,
         switchProviderAllowed: false,
+        provider: targetProvider,
       });
     }
 
-    let lastErr: AiServiceError | null = null;
-    for (const candidate of candidates) {
-      if (!candidate.adapter.embedTexts) continue;
-      try {
-        const res = await this.retryService.execute(
-          async () => candidate.adapter.embedTexts!(texts, taskType),
-          { maxRetries: 2, timeoutMs: 45_000, provider: candidate.adapter.id }
-        );
-        this.circuitBreaker.recordSuccess(candidate.adapter.id, res.value.latencyMs);
-        return res.value;
-      } catch (err) {
-        const classified = classifyProviderError(err, candidate.adapter.id);
-        lastErr = classified;
-        this.circuitBreaker.recordFailure(candidate.adapter.id, classified.category);
-        if (!classified.switchProviderAllowed) throw classified;
-      }
-    }
-
-    throw (
-      lastErr ||
-      new AiServiceError({
-        message: 'Embedding generation failed across available providers.',
+    if (!this.circuitBreaker.canExecute(targetProvider)) {
+      throw new AiServiceError({
+        message: `Canonical embedding provider "${targetProvider}" circuit breaker is open.`,
         statusCode: 503,
-        category: 'provider_unavailable',
+        category: 'circuit_open',
         retryable: false,
         switchProviderAllowed: false,
-      })
-    );
+        provider: targetProvider,
+      });
+    }
+
+    try {
+      const res = await this.retryService.execute(
+        async () => adapter.embedTexts!(texts, taskType),
+        { maxRetries: 2, timeoutMs: 45_000, provider: adapter.id }
+      );
+      this.circuitBreaker.recordSuccess(adapter.id, res.value.latencyMs);
+      return res.value;
+    } catch (err) {
+      const classified = classifyProviderError(err, adapter.id);
+      this.circuitBreaker.recordFailure(adapter.id, classified.category);
+      throw classified;
+    }
   }
 
   public async generateSpeech(
@@ -595,8 +609,6 @@ ${first.text.slice(0, 6000)}`;
           this.recordTelemetry({
             auth,
             feature: 'speech',
-            promptSummary: text.slice(0, 180),
-            responseText: 'Audio WAV generated',
             provider: res.value.provider,
             model: res.value.model,
             latencyMs: res.value.latencyMs,
@@ -693,15 +705,13 @@ ${first.text.slice(0, 6000)}`;
           this.recordTelemetry({
             auth,
             feature: 'audio_lecture',
-            promptSummary: `Audio transcription (${mimeType})`,
-            responseText: managed.text,
             provider: managed.provider,
             model: managed.model,
             latencyMs: managed.latencyMs,
             inputTokens: managed.usage.inputTokens,
             outputTokens: managed.usage.outputTokens,
             totalTokens: managed.usage.totalTokens,
-            actualCostUsd: managed.usage.actualCostUsd,
+            actualCostUsd: managed.usage.actualCostUsd ?? null,
             status: fallbackUsed ? 'fallback_success' : 'success',
             cached: false,
             fallbackUsed,
@@ -729,6 +739,103 @@ ${first.text.slice(0, 6000)}`;
     } finally {
       releaseSlot();
     }
+  }
+
+  public async probeProviders(): Promise<AiProviderDiagnosticResult[]> {
+    const order: AiProviderId[] = ['gemini', 'openai', 'anthropic'];
+    const checkedAt = new Date().toISOString();
+
+    const results = await Promise.all(
+      order.map(async (id): Promise<AiProviderDiagnosticResult> => {
+        const adapter = this.adapters.get(id);
+        const circuit = this.circuitBreaker.getSnapshot(id);
+        const activeModels: Record<string, string> = adapter
+          ? {
+              simple_text: adapter.getConfiguredModel('simple_text'),
+              complex_reasoning: adapter.getConfiguredModel('complex_reasoning'),
+              multimodal: adapter.getConfiguredModel('multimodal'),
+              structured_json: adapter.getConfiguredModel('structured_json'),
+            }
+          : {};
+
+        if (!adapter || !adapter.isConfigured()) {
+          return {
+            id,
+            displayName: adapter?.displayName || id,
+            diagnosticState: 'not_configured',
+            activeModels,
+            latencyMs: null,
+            circuitState: circuit.state,
+            errorCategory: null,
+            message: 'API key environment secret is not configured on the server.',
+            checkedAt,
+          };
+        }
+
+        if (circuit.state === 'open') {
+          return {
+            id,
+            displayName: adapter.displayName,
+            diagnosticState: 'circuit_open',
+            activeModels,
+            latencyMs: circuit.lastLatencyMs,
+            circuitState: circuit.state,
+            errorCategory: circuit.lastErrorCategory,
+            message: `Circuit breaker is open (${Math.ceil(circuit.cooldownRemainingMs / 1000)}s cooldown remaining).`,
+            checkedAt,
+          };
+        }
+
+        const start = Date.now();
+        try {
+          const model = adapter.getConfiguredModel('simple_text');
+          const controller = new AbortController();
+          const timer = setTimeout(() => controller.abort(), 10_000);
+          try {
+            await adapter.generateText(
+              {
+                taskType: 'simple_text',
+                feature: 'chat',
+                contents: 'Reply with a single word: OK',
+              },
+              model,
+              controller.signal
+            );
+          } finally {
+            clearTimeout(timer);
+          }
+          const latencyMs = Date.now() - start;
+          return {
+            id,
+            displayName: adapter.displayName,
+            diagnosticState: 'connection_verified',
+            activeModels,
+            latencyMs,
+            circuitState: circuit.state,
+            errorCategory: null,
+            message: `Live probe succeeded in ${latencyMs}ms using ${model}.`,
+            checkedAt,
+          };
+        } catch (err) {
+          const classified = classifyProviderError(err, id);
+          const diagnosticState: AiProviderDiagnosticResult['diagnosticState'] =
+            classified.category === 'auth_error' ? 'auth_failure' : 'temporarily_unavailable';
+          return {
+            id,
+            displayName: adapter.displayName,
+            diagnosticState,
+            activeModels,
+            latencyMs: Date.now() - start,
+            circuitState: this.circuitBreaker.getSnapshot(id).state,
+            errorCategory: classified.category,
+            message: classified.message,
+            checkedAt,
+          };
+        }
+      })
+    );
+
+    return results;
   }
 
   public getHealthSnapshots(taskType: AiTaskType = 'complex_reasoning'): AiProviderHealthSnapshot[] {
@@ -769,9 +876,12 @@ ${first.text.slice(0, 6000)}`;
   }
 
   public getMonitoringOverview() {
+    const canonicalEmb = modelRegistry.getCanonicalEmbeddingConfig();
     return {
       primaryProvider: modelRegistry.getPrimaryProviderId(),
       fallbackProvider: modelRegistry.getFallbackProviderId(),
+      canonicalEmbeddingProvider: canonicalEmb.provider,
+      canonicalEmbeddingModel: canonicalEmb.model,
       providers: this.getHealthSnapshots('complex_reasoning'),
       taskModels: {
         simple_text: modelRegistry.resolveModelForProvider(modelRegistry.getPrimaryProviderId(), 'simple_text'),
@@ -780,7 +890,11 @@ ${first.text.slice(0, 6000)}`;
           'complex_reasoning'
         ),
         multimodal: modelRegistry.resolveModelForProvider(modelRegistry.getPrimaryProviderId(), 'multimodal'),
-        embeddings: modelRegistry.resolveModelForProvider('gemini', 'embeddings'),
+        structured_json: modelRegistry.resolveModelForProvider(
+          modelRegistry.getPrimaryProviderId(),
+          'structured_json'
+        ),
+        embeddings: canonicalEmb.model,
         tts: modelRegistry.resolveModelForProvider('gemini', 'tts'),
         audio_transcription: modelRegistry.resolveModelForProvider('gemini', 'audio_transcription'),
       },

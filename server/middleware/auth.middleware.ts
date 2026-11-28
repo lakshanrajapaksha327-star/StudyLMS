@@ -1,5 +1,9 @@
 import { Request, Response, NextFunction } from 'express';
-import { adminAuth, PRIMARY_ADMIN_EMAIL } from '../lib/firebase-admin';
+import {
+  adminAuth,
+  getConfiguredAdminEmails,
+  getConfiguredAdminUids,
+} from '../lib/firebase-admin';
 import { firestoreRest } from '../config/firestore_rest';
 
 export interface AuthenticatedUser {
@@ -27,6 +31,30 @@ function extractBearerToken(req: Request): string | null {
   return token || null;
 }
 
+function isTokenOrEnvAdmin(decoded: {
+  uid: string;
+  email?: string;
+  email_verified?: boolean;
+  admin?: unknown;
+  role?: unknown;
+}): boolean {
+  if (decoded.admin === true || decoded.role === 'Admin') {
+    return true;
+  }
+  const adminUids = getConfiguredAdminUids();
+  if (adminUids.includes(decoded.uid)) {
+    return true;
+  }
+  const email = (decoded.email || '').toLowerCase();
+  if (email && Boolean(decoded.email_verified)) {
+    const adminEmails = getConfiguredAdminEmails();
+    if (adminEmails.includes(email)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 export async function requireAuth(req: Request, res: Response, next: NextFunction) {
   try {
     const token = extractBearerToken(req);
@@ -40,9 +68,7 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
 
     const decoded = await adminAuth.verifyIdToken(token);
     const email = decoded.email || '';
-    const isPrimaryAdmin =
-      email.toLowerCase() === PRIMARY_ADMIN_EMAIL.toLowerCase() &&
-      Boolean(decoded.email_verified);
+    const isAdminFromEnvOrClaim = isTokenOrEnvAdmin(decoded);
 
     req.idToken = token;
     req.user = {
@@ -51,11 +77,11 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
       name: decoded.name || email.split('@')[0] || 'Student',
       avatar: decoded.picture,
       emailVerified: Boolean(decoded.email_verified),
-      role: isPrimaryAdmin ? 'Admin' : 'Student',
+      role: isAdminFromEnvOrClaim ? 'Admin' : 'Student',
     };
 
     next();
-  } catch (err: any) {
+  } catch {
     return res.status(401).json({
       success: false,
       error: 'Invalid or expired authentication session. Please sign in again.',
@@ -72,9 +98,7 @@ export async function optionalAuth(req: Request, _res: Response, next: NextFunct
     }
     const decoded = await adminAuth.verifyIdToken(token);
     const email = decoded.email || '';
-    const isPrimaryAdmin =
-      email.toLowerCase() === PRIMARY_ADMIN_EMAIL.toLowerCase() &&
-      Boolean(decoded.email_verified);
+    const isAdminFromEnvOrClaim = isTokenOrEnvAdmin(decoded);
 
     req.idToken = token;
     req.user = {
@@ -83,7 +107,7 @@ export async function optionalAuth(req: Request, _res: Response, next: NextFunct
       name: decoded.name || email.split('@')[0] || 'Student',
       avatar: decoded.picture,
       emailVerified: Boolean(decoded.email_verified),
-      role: isPrimaryAdmin ? 'Admin' : 'Student',
+      role: isAdminFromEnvOrClaim ? 'Admin' : 'Student',
     };
   } catch {
     // Ignore invalid optional token and leave req.user undefined
@@ -100,21 +124,21 @@ export async function requireAdmin(req: Request, res: Response, next: NextFuncti
     });
   }
 
-  if (
-    req.user.email.toLowerCase() === PRIMARY_ADMIN_EMAIL.toLowerCase() &&
-    req.user.emailVerified
-  ) {
-    req.user.role = 'Admin';
+  if (req.user.role === 'Admin') {
     return next();
   }
 
   try {
-    const profile = await firestoreRest.getDoc<{ role?: string }>(
-      'users',
-      req.user.uid,
-      req.idToken
-    );
-    if (profile?.role === 'Admin') {
+    const [adminDoc, profile] = await Promise.all([
+      firestoreRest
+        .getDoc<{ uid?: string; role?: string }>('admins', req.user.uid, req.idToken)
+        .catch(() => null),
+      firestoreRest
+        .getDoc<{ role?: string }>('users', req.user.uid, req.idToken)
+        .catch(() => null),
+    ]);
+
+    if (adminDoc || profile?.role === 'Admin') {
       req.user.role = 'Admin';
       return next();
     }

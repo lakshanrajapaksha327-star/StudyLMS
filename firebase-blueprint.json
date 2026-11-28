@@ -75,11 +75,12 @@
         "blobChunkCount": { "type": "number" },
         "processingStatus": {
           "type": "string",
-          "enum": ["uploaded", "validating", "extracting", "ocr_processing", "chunking", "embedding", "indexing", "ready", "partially_processed", "failed"]
+          "enum": ["uploaded", "validating", "extracting", "ocr_processing", "chunking", "embedding", "summarizing", "indexing", "ready", "partially_processed", "failed"]
         },
         "progressPercent": { "type": "number" },
         "chunkCount": { "type": "number" },
         "pageCount": { "type": "number" },
+        "embeddingProvider": { "type": "string", "maxLength": 40 },
         "embeddingModel": { "type": "string", "maxLength": 80 },
         "ocrWarnings": { "type": "string", "maxLength": 2000 },
         "errorMessage": { "type": "string", "maxLength": 1000 },
@@ -109,6 +110,7 @@
         "sourceTitle": { "type": "string", "maxLength": 300 },
         "tokenCount": { "type": "number" },
         "embedding": { "type": "array" },
+        "embeddingProvider": { "type": "string", "maxLength": 40 },
         "embeddingModel": { "type": "string", "maxLength": 80 },
         "createdAt": { "type": "string", "maxLength": 64 }
       },
@@ -130,6 +132,29 @@
         "createdAt": { "type": "string", "maxLength": 64 }
       },
       "required": ["id", "userId", "documentId", "chunkIndex", "totalChunks", "dataBase64", "createdAt"]
+    },
+    "DocumentJobDoc": {
+      "title": "DocumentJobDoc",
+      "description": "Persistent document processing pipeline job stage, progress, and step history",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "userId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "documentId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "notebookId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "stage": {
+          "type": "string",
+          "enum": ["validating", "extracting", "ocr_processing", "chunking", "embedding", "summarizing", "ready", "partially_processed", "failed"]
+        },
+        "progressPercent": { "type": "number" },
+        "retryCount": { "type": "number" },
+        "stepHistory": { "type": "array" },
+        "errorMessage": { "type": "string", "maxLength": 1000 },
+        "startedAt": { "type": "string", "maxLength": 64 },
+        "updatedAt": { "type": "string", "maxLength": 64 },
+        "completedAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["id", "userId", "documentId", "notebookId", "stage", "progressPercent", "retryCount", "startedAt", "updatedAt"]
     },
     "StudyNoteDoc": {
       "title": "StudyNoteDoc",
@@ -174,6 +199,9 @@
         "description": { "type": "string", "maxLength": 1000 },
         "category": { "type": "string", "maxLength": 100 },
         "cards": { "type": "array" },
+        "groundingMode": { "type": "string", "maxLength": 40 },
+        "sourceDocumentIds": { "type": "array" },
+        "sourceCitations": { "type": "array" },
         "createdAt": { "type": "string", "maxLength": 64 },
         "updatedAt": { "type": "string", "maxLength": 64 }
       },
@@ -192,6 +220,9 @@
         "difficulty": { "type": "string", "enum": ["easy", "medium", "hard"] },
         "bestScore": { "type": "number" },
         "questions": { "type": "array" },
+        "groundingMode": { "type": "string", "maxLength": 40 },
+        "sourceDocumentIds": { "type": "array" },
+        "sourceCitations": { "type": "array" },
         "createdAt": { "type": "string", "maxLength": 64 },
         "updatedAt": { "type": "string", "maxLength": 64 }
       },
@@ -513,6 +544,10 @@
     "/document_blobs/{blobId}": {
       "schema": { "$ref": "#/entities/DocumentBlobDoc" },
       "description": "Chunked base64 payloads of uploaded original documents"
+    },
+    "/document_jobs/{jobId}": {
+      "schema": { "$ref": "#/entities/DocumentJobDoc" },
+      "description": "Persistent document ingestion and indexing job tracker"
     },
     "/study_notes/{noteId}": {
       "schema": { "$ref": "#/entities/StudyNoteDoc" },

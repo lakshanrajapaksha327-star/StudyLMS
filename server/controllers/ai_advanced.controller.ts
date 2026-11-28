@@ -90,22 +90,57 @@ export class AiAdvancedController {
   public async generateSummaryMode(req: Request, res: Response, next: NextFunction) {
     try {
       const auth = getAuthContext(req);
-      const { mode = 'detailed', title, sourceContent, notebookId, selectedDocumentIds } = req.body || {};
+      const { mode = 'detailed', title, sourceContent, notebookId, selectedDocumentIds } =
+        req.body || {};
 
       let material = typeof sourceContent === 'string' ? sourceContent : '';
       let citations: any[] = [];
+      let orderedChunks:
+        | Array<{
+            content: string;
+            pageNumber?: number;
+            slideNumber?: number;
+            sectionHeading?: string;
+            sourceTitle?: string;
+          }>
+        | undefined;
+
+      const docIds = Array.isArray(selectedDocumentIds)
+        ? selectedDocumentIds.filter((id: unknown) => typeof id === 'string' && id.trim())
+        : [];
 
       if (!material.trim()) {
-        const rag = await ragService.retrieveContext({
-          query: `Summarize key themes, definitions, formulas, and facts for ${title || 'study materials'}`,
-          auth,
-          notebookId,
-          selectedDocumentIds,
-          topK: 14,
-          maxContextTokens: 9000,
-        });
-        material = rag.formattedContext;
-        citations = rag.citations;
+        if (docIds.length > 0) {
+          const ordered = await ragService.getOrderedChunksForDocuments(
+            auth,
+            docIds,
+            notebookId
+          );
+          if (ordered.chunks.length === 0) {
+            throw new ApiError(
+              422,
+              'Selected document(s) have no indexed study chunks yet. Please re-index or retry processing before summarizing.',
+              'NO_INDEXED_CHUNKS'
+            );
+          }
+          orderedChunks = ordered.chunks;
+          const formatted = ragService.formatChunksAsContext(
+            ordered.chunks.map((chunk) => ({ chunk, score: 1 })),
+            ordered.docMap
+          );
+          material = formatted.formattedContext;
+          citations = formatted.citations.slice(0, 12);
+        } else {
+          const rag = await ragService.retrieveContext({
+            query: `Summarize key themes, definitions, formulas, and facts for ${title || 'study materials'}`,
+            auth,
+            notebookId,
+            topK: 14,
+            maxContextTokens: 9000,
+          });
+          material = rag.formattedContext;
+          citations = rag.citations;
+        }
       }
 
       if (!material.trim()) {
@@ -116,6 +151,7 @@ export class AiAdvancedController {
         mode: mode as SummaryGenerationMode,
         title: String(title || 'Study Material Summary'),
         sourceContent: material,
+        orderedChunks,
         auth,
       });
 
@@ -124,7 +160,7 @@ export class AiAdvancedController {
           {
             type: 'summary_generated',
             title: `${String(title || 'Document')} (${mode})`,
-            details: `Generated ${mode} summary across ${citations.length || 1} source excerpt(s)`,
+            details: `Generated ${mode} summary (${summaryResult.coverage?.analyzedChunks || citations.length || 1} chunk(s))`,
           },
           auth
         )
@@ -134,6 +170,7 @@ export class AiAdvancedController {
         success: true,
         summary: summaryResult,
         citations,
+        coverage: summaryResult.coverage,
       });
     } catch (err) {
       next(err);

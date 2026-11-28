@@ -1,5 +1,5 @@
 import { firestoreRest } from '../config/firestore_rest';
-import { DocumentBlobModel, DocumentModel } from '../models/document.model';
+import { DocumentBlobModel, DocumentJobModel, DocumentModel } from '../models/document.model';
 import { AuthContext, pickAllowedKeys } from './base.repository';
 
 const DOCUMENT_ALLOWED_KEYS = [
@@ -18,6 +18,7 @@ const DOCUMENT_ALLOWED_KEYS = [
   'progressPercent',
   'chunkCount',
   'pageCount',
+  'embeddingProvider',
   'embeddingModel',
   'ocrWarnings',
   'errorMessage',
@@ -38,6 +39,21 @@ const BLOB_ALLOWED_KEYS = [
   'originalFilename',
   'dataBase64',
   'createdAt',
+] as const;
+
+const JOB_ALLOWED_KEYS = [
+  'id',
+  'userId',
+  'documentId',
+  'notebookId',
+  'stage',
+  'progressPercent',
+  'retryCount',
+  'stepHistory',
+  'errorMessage',
+  'startedAt',
+  'updatedAt',
+  'completedAt',
 ] as const;
 
 export class DocumentRepository {
@@ -181,6 +197,47 @@ export class DocumentRepository {
     for (let i = 0; i < count; i++) {
       await firestoreRest.deleteDoc('document_blobs', `blob-${doc.id}-${i}`, auth.idToken).catch(() => {});
     }
+  }
+
+  public async saveJob(job: DocumentJobModel, auth: AuthContext): Promise<DocumentJobModel> {
+    const payload: DocumentJobModel = {
+      ...job,
+      id: `job-${job.documentId}`,
+      userId: auth.userId,
+      errorMessage: job.errorMessage ? job.errorMessage.slice(0, 950) : undefined,
+      stepHistory: Array.isArray(job.stepHistory) ? job.stepHistory.slice(-25) : [],
+      updatedAt: new Date().toISOString(),
+    };
+    const clean = pickAllowedKeys(payload, JOB_ALLOWED_KEYS) as DocumentJobModel;
+    return firestoreRest.setDoc<DocumentJobModel>('document_jobs', clean.id, clean, auth.idToken);
+  }
+
+  public async getJobByDocumentId(
+    documentId: string,
+    auth: AuthContext
+  ): Promise<DocumentJobModel | undefined> {
+    const job = await firestoreRest.getDoc<DocumentJobModel>(
+      'document_jobs',
+      `job-${documentId}`,
+      auth.idToken
+    );
+    if (!job || job.userId !== auth.userId) return undefined;
+    return job;
+  }
+
+  public async listJobsByUser(auth: AuthContext): Promise<DocumentJobModel[]> {
+    const jobs = await firestoreRest.listByUser<DocumentJobModel>(
+      'document_jobs',
+      auth.userId,
+      auth.idToken
+    );
+    return jobs.sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''));
+  }
+
+  public async deleteJobForDocument(documentId: string, auth: AuthContext): Promise<void> {
+    await firestoreRest
+      .deleteDoc('document_jobs', `job-${documentId}`, auth.idToken)
+      .catch(() => {});
   }
 }
 

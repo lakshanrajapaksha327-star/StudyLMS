@@ -16,8 +16,10 @@ router.post('/rag/retrieve', (req, res, next) =>
   documentController.retrieveRag(req, res, next)
 );
 
+router.get('/document-jobs', (req, res, next) => documentController.listJobs(req, res, next));
 router.get('/documents', (req, res, next) => documentController.getAll(req, res, next));
 router.get('/documents/:id', (req, res, next) => documentController.getById(req, res, next));
+router.get('/documents/:id/job', (req, res, next) => documentController.getJob(req, res, next));
 router.get('/documents/:id/content', (req, res, next) =>
   documentController.getFullContent(req, res, next)
 );

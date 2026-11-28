@@ -1,4 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
+import { aiManagerService } from '../ai/ai-manager.service';
 import { getAuthContext } from '../repositories/base.repository';
 import { userPreferencesRepository } from '../repositories/user_preferences.repository';
 
@@ -7,6 +8,7 @@ export class UserPreferencesController {
     try {
       const auth = getAuthContext(req);
       const prefs = await userPreferencesRepository.getByUserId(auth);
+      aiManagerService.setUserPrivacyCache(auth.userId, Boolean(prefs.privacyMode));
       res.json({ success: true, preferences: prefs });
     } catch (err) {
       next(err);
@@ -20,6 +22,7 @@ export class UserPreferencesController {
       delete updates.userId;
 
       const updated = await userPreferencesRepository.updatePreferences(updates, auth);
+      aiManagerService.setUserPrivacyCache(auth.userId, Boolean(updated.privacyMode));
       res.json({ success: true, preferences: updated });
     } catch (err) {
       next(err);

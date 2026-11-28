@@ -23,6 +23,7 @@ export class DocumentController {
           success: true,
           document: result.document,
           flashcards: result.flashcards,
+          job: result.job,
         });
       }
 
@@ -37,6 +38,7 @@ export class DocumentController {
           success: true,
           document: result.document,
           flashcards: result.flashcards,
+          job: result.job,
         });
       }
 
@@ -140,7 +142,12 @@ export class DocumentController {
       if (!isValidResourceId(req.params.id)) throw new ApiError(400, 'Invalid document ID.');
       if (!req.file) throw new ApiError(400, 'Replacement file is required.');
       const result = await documentService.replaceDocumentFile(req.params.id, req.file, auth);
-      res.json({ success: true, document: result.document, flashcards: result.flashcards });
+      res.json({
+        success: true,
+        document: result.document,
+        flashcards: result.flashcards,
+        job: result.job,
+      });
     } catch (err) {
       next(err);
     }
@@ -151,7 +158,34 @@ export class DocumentController {
       const auth = getAuthContext(req);
       if (!isValidResourceId(req.params.id)) throw new ApiError(400, 'Invalid document ID.');
       const result = await documentService.reindexDocument(req.params.id, auth);
-      res.json({ success: true, document: result.document, flashcards: result.flashcards });
+      res.json({
+        success: true,
+        document: result.document,
+        flashcards: result.flashcards,
+        job: result.job,
+      });
+    } catch (err) {
+      next(err);
+    }
+  }
+
+  public async getJob(req: Request, res: Response, next: NextFunction) {
+    try {
+      const auth = getAuthContext(req);
+      if (!isValidResourceId(req.params.id)) throw new ApiError(400, 'Invalid document ID.');
+      const job = await documentService.getDocumentJob(req.params.id, auth);
+      if (!job) throw new ApiError(404, 'Document job not found.', 'NOT_FOUND');
+      res.json({ success: true, job });
+    } catch (err) {
+      next(err);
+    }
+  }
+
+  public async listJobs(req: Request, res: Response, next: NextFunction) {
+    try {
+      const auth = getAuthContext(req);
+      const jobs = await documentService.listDocumentJobs(auth);
+      res.json({ success: true, jobs });
     } catch (err) {
       next(err);
     }

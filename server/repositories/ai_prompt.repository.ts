@@ -28,16 +28,22 @@ export class AiPromptRepository {
     auth: AuthContext
   ): Promise<AiPromptLogModel> {
     const log: Record<string, any> = {
-      ...entry,
       userId: auth.userId,
       id: makeSafeId('ailog'),
-      prompt: (entry.prompt || '').slice(0, 1900),
-      response: (entry.response || '').slice(0, 1900),
+      feature: entry.feature,
+      provider: entry.provider || 'gemini',
+      latencyMs: entry.latencyMs,
+      tokensConsumed: entry.tokensConsumed ?? 0,
+      modelName: entry.modelName,
+      status: entry.status || 'success',
+      cached: Boolean(entry.cached),
+      fallbackUsed: Boolean(entry.fallbackUsed),
       createdAt: new Date().toISOString(),
     };
-    if (log.inputTokens === null || log.inputTokens === undefined) delete log.inputTokens;
-    if (log.outputTokens === null || log.outputTokens === undefined) delete log.outputTokens;
-    if (!log.errorCategory) delete log.errorCategory;
+    if (typeof entry.inputTokens === 'number') log.inputTokens = entry.inputTokens;
+    if (typeof entry.outputTokens === 'number') log.outputTokens = entry.outputTokens;
+    if (typeof entry.costUsd === 'number') log.costUsd = entry.costUsd;
+    if (entry.errorCategory) log.errorCategory = entry.errorCategory;
 
     const clean = pickAllowedKeys(log, AI_LOG_KEYS) as AiPromptLogModel;
     return firestoreRest.setDoc('ai_usage_logs', clean.id, clean, auth.idToken);
@@ -52,6 +58,14 @@ export class AiPromptRepository {
     return logs.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
   }
 
+  public async clearLogsForUser(auth: AuthContext): Promise<number> {
+    const logs = await this.getLogsByUserId(auth);
+    for (const item of logs) {
+      await firestoreRest.deleteDoc('ai_usage_logs', item.id, auth.idToken).catch(() => {});
+    }
+    return logs.length;
+  }
+
   public async getAllLogsAdmin(auth: AuthContext): Promise<AiPromptLogModel[]> {
     const logs = await firestoreRest.listAllAdmin<AiPromptLogModel>('ai_usage_logs', auth.idToken);
     return logs.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
@@ -60,7 +74,11 @@ export class AiPromptRepository {
   public async getStats(auth: AuthContext) {
     const logs = await this.getLogsByUserId(auth);
     const totalTokens = logs.reduce((acc, l) => acc + (l.tokensConsumed || 0), 0);
-    const totalCost = logs.reduce((acc, l) => acc + (l.costUsd || 0), 0);
+    const knownCostLogs = logs.filter((l) => typeof l.costUsd === 'number');
+    const totalCost =
+      knownCostLogs.length > 0
+        ? Number(knownCostLogs.reduce((acc, l) => acc + (l.costUsd || 0), 0).toFixed(6))
+        : null;
     const avgLatency =
       logs.length > 0
         ? Math.round(logs.reduce((acc, l) => acc + (l.latencyMs || 0), 0) / logs.length)
@@ -69,7 +87,7 @@ export class AiPromptRepository {
     return {
       totalRequests: logs.length,
       totalTokens,
-      totalCostUsd: Number(totalCost.toFixed(6)),
+      totalCostUsd: totalCost,
       avgLatencyMs: avgLatency,
     };
   }

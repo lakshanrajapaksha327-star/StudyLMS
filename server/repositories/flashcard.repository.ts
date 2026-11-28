@@ -10,6 +10,9 @@ const FLASHCARD_SET_KEYS = [
   'description',
   'category',
   'cards',
+  'groundingMode',
+  'sourceDocumentIds',
+  'sourceCitations',
   'createdAt',
   'updatedAt',
 ] as const;

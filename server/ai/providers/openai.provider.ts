@@ -1,4 +1,4 @@
-import OpenAI from 'openai';
+import OpenAI, { toFile } from 'openai';
 import {
   AiEmbeddingResult,
   AiGenerateRequest,
@@ -10,7 +10,25 @@ import {
 import { AiServiceError, classifyProviderError } from '../ai-errors';
 import { modelRegistry } from '../model-registry';
 
-function convertContentsToOpenAiMessages(
+const OPENAI_RASTER_IMAGE_MIMES = new Set([
+  'image/png',
+  'image/jpeg',
+  'image/jpg',
+  'image/gif',
+  'image/webp',
+]);
+
+function mimeTypeToAudioExtension(mimeType: string): string {
+  const lower = (mimeType || '').toLowerCase();
+  if (lower.includes('wav')) return 'wav';
+  if (lower.includes('mpeg') || lower.includes('mp3')) return 'mp3';
+  if (lower.includes('mp4') || lower.includes('m4a')) return 'm4a';
+  if (lower.includes('ogg')) return 'ogg';
+  if (lower.includes('flac')) return 'flac';
+  return 'webm';
+}
+
+export function convertContentsToOpenAiMessages(
   contents: AiGenerateRequest['contents'],
   systemInstruction?: string,
   requireJson?: boolean,
@@ -39,9 +57,9 @@ function convertContentsToOpenAiMessages(
 
   for (const item of contentArray) {
     const role = item.role === 'model' || item.role === 'assistant' ? 'assistant' : 'user';
-    const hasImages = item.parts.some((p) => Boolean(p.inlineData));
+    const hasInline = item.parts.some((p) => Boolean(p.inlineData));
 
-    if (!hasImages) {
+    if (!hasInline) {
       const joined = item.parts.map((p) => p.text || '').join('\n').trim();
       if (joined) {
         messages.push({ role, content: joined });
@@ -52,10 +70,21 @@ function convertContentsToOpenAiMessages(
         if (p.text) {
           parts.push({ type: 'text', text: p.text });
         } else if (p.inlineData) {
+          const mime = (p.inlineData.mimeType || '').toLowerCase();
+          if (!OPENAI_RASTER_IMAGE_MIMES.has(mime)) {
+            throw new AiServiceError({
+              message: `OpenAI Chat Completions cannot ingest binary MIME type "${p.inlineData.mimeType}" as an image URL. Use Gemini or Anthropic for PDFs/audio documents.`,
+              statusCode: 422,
+              category: 'invalid_request',
+              retryable: false,
+              switchProviderAllowed: true,
+              provider: 'openai',
+            });
+          }
           parts.push({
             type: 'image_url',
             image_url: {
-              url: `data:${p.inlineData.mimeType};base64,${p.inlineData.data}`,
+              url: `data:${mime};base64,${p.inlineData.data}`,
             },
           });
         }
@@ -77,8 +106,8 @@ export class OpenAiProvider implements AiProviderAdapter {
     return Boolean(process.env.OPENAI_API_KEY?.trim());
   }
 
-  public supportsTask(taskType: AiTaskType): boolean {
-    return taskType !== 'audio_transcription';
+  public supportsTask(_taskType: AiTaskType): boolean {
+    return true;
   }
 
   public getConfiguredModel(taskType: AiTaskType): string {
@@ -207,6 +236,49 @@ export class OpenAiProvider implements AiProviderAdapter {
         model,
         provider: 'openai',
         latencyMs: Date.now() - startTime,
+      };
+    } catch (err) {
+      throw classifyProviderError(err, 'openai');
+    }
+  }
+
+  public async transcribeAudio(
+    audioBase64: string,
+    mimeType: string,
+    prompt?: string,
+    signal?: AbortSignal
+  ): Promise<AiProviderExecutionResult> {
+    const client = this.getClient();
+    const model = this.getConfiguredModel('audio_transcription');
+    const startTime = Date.now();
+    try {
+      const buffer = Buffer.from(audioBase64, 'base64');
+      const ext = mimeTypeToAudioExtension(mimeType);
+      const file = await toFile(buffer, `lecture.${ext}`, {
+        type: mimeType || 'audio/webm',
+      });
+
+      const transcription = await client.audio.transcriptions.create(
+        {
+          file,
+          model,
+          ...(prompt ? { prompt: prompt.slice(0, 500) } : {}),
+        },
+        signal ? { signal } : undefined
+      );
+
+      const text = typeof transcription === 'string' ? transcription : transcription.text || '';
+      return {
+        text,
+        provider: 'openai',
+        model,
+        latencyMs: Date.now() - startTime,
+        usage: {
+          inputTokens: null,
+          outputTokens: null,
+          totalTokens: null,
+          actualCostUsd: null,
+        },
       };
     } catch (err) {
       throw classifyProviderError(err, 'openai');

@@ -31,9 +31,9 @@ service cloud.firestore {
 
     function isAdmin() {
       return isSignedIn() && (
-        (request.auth.token.email == 'lakshanrajapaksha327@gmail.com' &&
-         request.auth.token.email_verified == true) ||
-        exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid)) ||
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'Admin')
       );
     }
 
@@ -112,7 +112,7 @@ service cloud.firestore {
         && isValidId(data.notebookId)
         && isNonEmptyStr(data.title, 300)
         && isNonEmptyStr(data.type, 32)
-        && data.processingStatus in ['uploaded', 'validating', 'extracting', 'ocr_processing', 'chunking', 'embedding', 'indexing', 'ready', 'partially_processed', 'failed']
+        && data.processingStatus in ['uploaded', 'validating', 'extracting', 'ocr_processing', 'chunking', 'embedding', 'summarizing', 'indexing', 'ready', 'partially_processed', 'failed']
         && data.content is string && data.content.size() <= 700000
         && isOptStr(data, 'originalFilename', 300)
         && isOptStr(data, 'mimeType', 128)
@@ -123,6 +123,7 @@ service cloud.firestore {
         && isOptNum(data, 'progressPercent')
         && isOptNum(data, 'chunkCount')
         && isOptNum(data, 'pageCount')
+        && isOptStr(data, 'embeddingProvider', 40)
         && isOptStr(data, 'embeddingModel', 80)
         && isOptStr(data, 'ocrWarnings', 2000)
         && isOptStr(data, 'errorMessage', 1000)
@@ -147,6 +148,7 @@ service cloud.firestore {
         && isOptStr(data, 'sourceTitle', 300)
         && isOptNum(data, 'tokenCount')
         && isOptList(data, 'embedding', 3072)
+        && isOptStr(data, 'embeddingProvider', 40)
         && isOptStr(data, 'embeddingModel', 80)
         && isNonEmptyStr(data.createdAt, 64);
     }
@@ -162,6 +164,22 @@ service cloud.firestore {
         && isOptStr(data, 'originalFilename', 300)
         && data.dataBase64 is string && data.dataBase64.size() <= 850000
         && isNonEmptyStr(data.createdAt, 64);
+    }
+
+    function isValidDocumentJob(data, docId) {
+      return data.id == docId
+        && data.userId == request.auth.uid
+        && isValidId(data.userId)
+        && isValidId(data.documentId)
+        && isValidId(data.notebookId)
+        && data.stage in ['validating', 'extracting', 'ocr_processing', 'chunking', 'embedding', 'summarizing', 'ready', 'partially_processed', 'failed']
+        && data.progressPercent is number
+        && data.retryCount is number
+        && isOptList(data, 'stepHistory', 50)
+        && isOptStr(data, 'errorMessage', 1000)
+        && isNonEmptyStr(data.startedAt, 64)
+        && isNonEmptyStr(data.updatedAt, 64)
+        && isOptStr(data, 'completedAt', 64);
     }
 
     function isValidNote(data, docId) {
@@ -196,6 +214,9 @@ service cloud.firestore {
         && isOptStr(data, 'description', 1000)
         && isOptStr(data, 'category', 100)
         && data.cards is list && data.cards.size() <= 200
+        && isOptStr(data, 'groundingMode', 40)
+        && isOptList(data, 'sourceDocumentIds', 50)
+        && isOptList(data, 'sourceCitations', 30)
         && isNonEmptyStr(data.createdAt, 64)
         && isOptStr(data, 'updatedAt', 64);
     }
@@ -210,6 +231,9 @@ service cloud.firestore {
         && (!('difficulty' in data) || data.difficulty in ['easy', 'medium', 'hard'])
         && isOptNum(data, 'bestScore')
         && data.questions is list && data.questions.size() <= 200
+        && isOptStr(data, 'groundingMode', 40)
+        && isOptList(data, 'sourceDocumentIds', 50)
+        && isOptList(data, 'sourceCitations', 30)
         && isNonEmptyStr(data.createdAt, 64)
         && isOptStr(data, 'updatedAt', 64);
     }
@@ -523,7 +547,7 @@ service cloud.firestore {
         && isSignedIn()
         && isValidDocument(incoming(), documentId)
         && incoming().keys().hasAll(['id', 'userId', 'notebookId', 'title', 'type', 'processingStatus', 'content', 'addedAt'])
-        && incoming().keys().hasOnly(['id', 'userId', 'notebookId', 'title', 'originalFilename', 'type', 'mimeType', 'fileSizeBytes', 'fileSize', 'storageRef', 'blobChunkCount', 'processingStatus', 'progressPercent', 'chunkCount', 'pageCount', 'embeddingModel', 'ocrWarnings', 'errorMessage', 'content', 'summary', 'keyConcepts', 'addedAt', 'updatedAt']);
+        && incoming().keys().hasOnly(['id', 'userId', 'notebookId', 'title', 'originalFilename', 'type', 'mimeType', 'fileSizeBytes', 'fileSize', 'storageRef', 'blobChunkCount', 'processingStatus', 'progressPercent', 'chunkCount', 'pageCount', 'embeddingProvider', 'embeddingModel', 'ocrWarnings', 'errorMessage', 'content', 'summary', 'keyConcepts', 'addedAt', 'updatedAt']);
       allow update: if isValidId(documentId)
         && isSignedIn()
         && existing().userId == request.auth.uid
@@ -531,7 +555,7 @@ service cloud.firestore {
         && incoming().id == existing().id
         && incoming().userId == existing().userId
         && incoming().addedAt == existing().addedAt
-        && incoming().diff(existing()).affectedKeys().hasOnly(['notebookId', 'title', 'originalFilename', 'type', 'mimeType', 'fileSizeBytes', 'fileSize', 'storageRef', 'blobChunkCount', 'processingStatus', 'progressPercent', 'chunkCount', 'pageCount', 'embeddingModel', 'ocrWarnings', 'errorMessage', 'content', 'summary', 'keyConcepts', 'updatedAt']);
+        && incoming().diff(existing()).affectedKeys().hasOnly(['notebookId', 'title', 'originalFilename', 'type', 'mimeType', 'fileSizeBytes', 'fileSize', 'storageRef', 'blobChunkCount', 'processingStatus', 'progressPercent', 'chunkCount', 'pageCount', 'embeddingProvider', 'embeddingModel', 'ocrWarnings', 'errorMessage', 'content', 'summary', 'keyConcepts', 'updatedAt']);
       allow delete: if isValidId(documentId) && isSignedIn() && existing().userId == request.auth.uid;
     }
 
@@ -542,7 +566,7 @@ service cloud.firestore {
         && isSignedIn()
         && isValidChunk(incoming(), chunkId)
         && incoming().keys().hasAll(['id', 'userId', 'notebookId', 'documentId', 'chunkIndex', 'content', 'createdAt'])
-        && incoming().keys().hasOnly(['id', 'userId', 'notebookId', 'documentId', 'chunkIndex', 'content', 'contentHash', 'pageNumber', 'slideNumber', 'sectionHeading', 'sourceTitle', 'tokenCount', 'embedding', 'embeddingModel', 'createdAt']);
+        && incoming().keys().hasOnly(['id', 'userId', 'notebookId', 'documentId', 'chunkIndex', 'content', 'contentHash', 'pageNumber', 'slideNumber', 'sectionHeading', 'sourceTitle', 'tokenCount', 'embedding', 'embeddingProvider', 'embeddingModel', 'createdAt']);
       allow update: if isValidId(chunkId)
         && isSignedIn()
         && existing().userId == request.auth.uid
@@ -550,7 +574,7 @@ service cloud.firestore {
         && incoming().id == existing().id
         && incoming().userId == existing().userId
         && incoming().createdAt == existing().createdAt
-        && incoming().diff(existing()).affectedKeys().hasOnly(['content', 'contentHash', 'pageNumber', 'slideNumber', 'sectionHeading', 'sourceTitle', 'tokenCount', 'embedding', 'embeddingModel']);
+        && incoming().diff(existing()).affectedKeys().hasOnly(['content', 'contentHash', 'pageNumber', 'slideNumber', 'sectionHeading', 'sourceTitle', 'tokenCount', 'embedding', 'embeddingProvider', 'embeddingModel']);
       allow delete: if isValidId(chunkId) && isSignedIn() && existing().userId == request.auth.uid;
     }
 
@@ -563,6 +587,26 @@ service cloud.firestore {
         && incoming().keys().hasAll(['id', 'userId', 'documentId', 'chunkIndex', 'totalChunks', 'dataBase64', 'createdAt'])
         && incoming().keys().hasOnly(['id', 'userId', 'documentId', 'chunkIndex', 'totalChunks', 'mimeType', 'originalFilename', 'dataBase64', 'createdAt']);
       allow delete: if isValidId(blobId) && isSignedIn() && existing().userId == request.auth.uid;
+    }
+
+    match /document_jobs/{jobId} {
+      allow get: if isValidId(jobId) && isSignedIn() && existing().userId == request.auth.uid;
+      allow list: if isSignedIn() && existing().userId == request.auth.uid;
+      allow create: if isValidId(jobId)
+        && isSignedIn()
+        && isValidDocumentJob(incoming(), jobId)
+        && incoming().keys().hasAll(['id', 'userId', 'documentId', 'notebookId', 'stage', 'progressPercent', 'retryCount', 'startedAt', 'updatedAt'])
+        && incoming().keys().hasOnly(['id', 'userId', 'documentId', 'notebookId', 'stage', 'progressPercent', 'retryCount', 'stepHistory', 'errorMessage', 'startedAt', 'updatedAt', 'completedAt']);
+      allow update: if isValidId(jobId)
+        && isSignedIn()
+        && existing().userId == request.auth.uid
+        && isValidDocumentJob(incoming(), jobId)
+        && incoming().id == existing().id
+        && incoming().userId == existing().userId
+        && incoming().documentId == existing().documentId
+        && incoming().startedAt == existing().startedAt
+        && incoming().diff(existing()).affectedKeys().hasOnly(['notebookId', 'stage', 'progressPercent', 'retryCount', 'stepHistory', 'errorMessage', 'updatedAt', 'completedAt']);
+      allow delete: if isValidId(jobId) && isSignedIn() && existing().userId == request.auth.uid;
     }
 
     match /study_notes/{noteId} {
@@ -601,7 +645,7 @@ service cloud.firestore {
         && isSignedIn()
         && isValidFlashcardSet(incoming(), setId)
         && incoming().keys().hasAll(['id', 'userId', 'notebookId', 'title', 'cards', 'createdAt'])
-        && incoming().keys().hasOnly(['id', 'userId', 'notebookId', 'title', 'description', 'category', 'cards', 'createdAt', 'updatedAt']);
+        && incoming().keys().hasOnly(['id', 'userId', 'notebookId', 'title', 'description', 'category', 'cards', 'groundingMode', 'sourceDocumentIds', 'sourceCitations', 'createdAt', 'updatedAt']);
       allow update: if isValidId(setId)
         && isSignedIn()
         && existing().userId == request.auth.uid
@@ -609,7 +653,7 @@ service cloud.firestore {
         && incoming().id == existing().id
         && incoming().userId == existing().userId
         && incoming().createdAt == existing().createdAt
-        && incoming().diff(existing()).affectedKeys().hasOnly(['notebookId', 'title', 'description', 'category', 'cards', 'updatedAt']);
+        && incoming().diff(existing()).affectedKeys().hasOnly(['notebookId', 'title', 'description', 'category', 'cards', 'groundingMode', 'sourceDocumentIds', 'sourceCitations', 'updatedAt']);
       allow delete: if isValidId(setId) && isSignedIn() && existing().userId == request.auth.uid;
     }
 
@@ -620,7 +664,7 @@ service cloud.firestore {
         && isSignedIn()
         && isValidQuizSet(incoming(), quizId)
         && incoming().keys().hasAll(['id', 'userId', 'notebookId', 'title', 'questions', 'createdAt'])
-        && incoming().keys().hasOnly(['id', 'userId', 'notebookId', 'title', 'description', 'difficulty', 'bestScore', 'questions', 'createdAt', 'updatedAt']);
+        && incoming().keys().hasOnly(['id', 'userId', 'notebookId', 'title', 'description', 'difficulty', 'bestScore', 'questions', 'groundingMode', 'sourceDocumentIds', 'sourceCitations', 'createdAt', 'updatedAt']);
       allow update: if isValidId(quizId)
         && isSignedIn()
         && existing().userId == request.auth.uid
@@ -628,7 +672,7 @@ service cloud.firestore {
         && incoming().id == existing().id
         && incoming().userId == existing().userId
         && incoming().createdAt == existing().createdAt
-        && incoming().diff(existing()).affectedKeys().hasOnly(['notebookId', 'title', 'description', 'difficulty', 'bestScore', 'questions', 'updatedAt']);
+        && incoming().diff(existing()).affectedKeys().hasOnly(['notebookId', 'title', 'description', 'difficulty', 'bestScore', 'questions', 'groundingMode', 'sourceDocumentIds', 'sourceCitations', 'updatedAt']);
       allow delete: if isValidId(quizId) && isSignedIn() && existing().userId == request.auth.uid;
     }
 

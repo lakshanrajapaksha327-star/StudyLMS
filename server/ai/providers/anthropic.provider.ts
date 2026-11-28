@@ -8,7 +8,14 @@ import {
 import { AiServiceError, classifyProviderError } from '../ai-errors';
 import { modelRegistry } from '../model-registry';
 
-function convertContentsToAnthropicMessages(
+const ANTHROPIC_IMAGE_MIMES = new Set([
+  'image/jpeg',
+  'image/png',
+  'image/gif',
+  'image/webp',
+]);
+
+export function convertContentsToAnthropicMessages(
   contents: AiGenerateRequest['contents']
 ): Anthropic.MessageParam[] {
   if (typeof contents === 'string') {
@@ -27,21 +34,35 @@ function convertContentsToAnthropicMessages(
       if (p.text) {
         blocks.push({ type: 'text', text: p.text });
       } else if (p.inlineData) {
-        const mediaType =
-          p.inlineData.mimeType === 'image/jpeg' ||
-          p.inlineData.mimeType === 'image/png' ||
-          p.inlineData.mimeType === 'image/gif' ||
-          p.inlineData.mimeType === 'image/webp'
-            ? p.inlineData.mimeType
-            : 'image/png';
-        blocks.push({
-          type: 'image',
-          source: {
-            type: 'base64',
-            media_type: mediaType,
-            data: p.inlineData.data,
-          },
-        });
+        const mime = (p.inlineData.mimeType || '').toLowerCase();
+        if (mime === 'application/pdf') {
+          blocks.push({
+            type: 'document',
+            source: {
+              type: 'base64',
+              media_type: 'application/pdf',
+              data: p.inlineData.data,
+            },
+          } as any);
+        } else if (ANTHROPIC_IMAGE_MIMES.has(mime)) {
+          blocks.push({
+            type: 'image',
+            source: {
+              type: 'base64',
+              media_type: mime as 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp',
+              data: p.inlineData.data,
+            },
+          });
+        } else {
+          throw new AiServiceError({
+            message: `Anthropic Claude does not support binary MIME type "${p.inlineData.mimeType}". Only PDF documents and JPEG/PNG/GIF/WEBP images are supported.`,
+            statusCode: 422,
+            category: 'invalid_request',
+            retryable: false,
+            switchProviderAllowed: true,
+            provider: 'anthropic',
+          });
+        }
       }
     }
 

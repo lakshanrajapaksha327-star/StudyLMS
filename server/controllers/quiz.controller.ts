@@ -11,6 +11,7 @@ export class QuizController {
       const {
         topic,
         sourceContent,
+        sourceMode,
         questionCount,
         difficulty,
         questionFormat,
@@ -21,6 +22,7 @@ export class QuizController {
         {
           topic,
           sourceContent,
+          sourceMode,
           questionCount,
           difficulty,
           questionFormat,
@@ -29,7 +31,13 @@ export class QuizController {
         },
         auth
       );
-      res.json({ success: true, questions: quiz.questions, quiz });
+      res.json({
+        success: true,
+        questions: quiz.questions,
+        quiz,
+        groundingMode: quiz.groundingMode,
+        sourceCitations: quiz.sourceCitations || [],
+      });
     } catch (err) {
       next(err);
     }

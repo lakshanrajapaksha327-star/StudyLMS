@@ -1,6 +1,11 @@
 import path from 'path';
 import { ApiError } from '../middleware/validate.middleware';
-import { DocumentModel } from '../models/document.model';
+import {
+  DocumentJobModel,
+  DocumentJobStage,
+  DocumentJobStepRecord,
+  DocumentModel,
+} from '../models/document.model';
 import { AuthContext, makeSafeId } from '../repositories/base.repository';
 import { chunkRepository } from '../repositories/chunk.repository';
 import { documentRepository } from '../repositories/document.repository';
@@ -20,6 +25,67 @@ function formatBytes(bytes: number): string {
 }
 
 export class DocumentService {
+  private createInitialJob(
+    documentId: string,
+    notebookId: string,
+    auth: AuthContext,
+    retryCount = 0
+  ): DocumentJobModel {
+    const now = new Date().toISOString();
+    return {
+      id: `job-${documentId}`,
+      userId: auth.userId,
+      documentId,
+      notebookId,
+      stage: 'validating',
+      progressPercent: 10,
+      retryCount,
+      stepHistory: [
+        {
+          stage: 'validating',
+          status: 'completed',
+          at: now,
+          note: retryCount > 0 ? `Retry #${retryCount} started` : 'Upload validated',
+        },
+      ],
+      startedAt: now,
+      updatedAt: now,
+    };
+  }
+
+  private async advanceJob(
+    job: DocumentJobModel,
+    stage: DocumentJobStage,
+    progressPercent: number,
+    stepStatus: DocumentJobStepRecord['status'],
+    auth: AuthContext,
+    note?: string,
+    errorMessage?: string
+  ): Promise<DocumentJobModel> {
+    const now = new Date().toISOString();
+    const updated: DocumentJobModel = {
+      ...job,
+      stage,
+      progressPercent,
+      errorMessage: errorMessage ?? job.errorMessage,
+      updatedAt: now,
+      completedAt:
+        stage === 'ready' || stage === 'partially_processed' || stage === 'failed'
+          ? now
+          : job.completedAt,
+      stepHistory: [
+        ...job.stepHistory,
+        {
+          stage,
+          status: stepStatus,
+          at: now,
+          ...(note ? { note } : {}),
+        },
+      ],
+    };
+    return documentRepository.saveJob(updated, auth).catch(() => updated);
+  }
+
   public async uploadAndProcessFile(
     file: Express.Multer.File,
     customTitle: string | undefined,
@@ -35,12 +101,17 @@ export class DocumentService {
     const cleanFilename = path.basename(file.originalname || 'document').slice(0, 290);
     const title = (customTitle?.trim() || cleanFilename).slice(0, 290);
 
+    let job = this.createInitialJob(docId, resolvedNbId, auth, 0);
+    job = await documentRepository.saveJob(job, auth).catch(() => job);
+    job = await this.advanceJob(job, 'extracting', 25, 'completed', auth, `Extracting ${cleanFilename}`);
+
     // 1. Validate & extract text/OCR before declaring ready
     let extracted: DocumentExtractionResult;
     try {
       extracted = await documentExtractorService.extractFromFile(file, auth);
     } catch (err: any) {
-      // Persist failed document record honestly so user can see error and retry/delete
+      const msg = err?.message || 'Document extraction failed.';
+      job = await this.advanceJob(job, 'failed', 0, 'failed', auth, 'Extraction failed', msg);
       const failedDoc: DocumentModel = {
         id: docId,
         userId: auth.userId,
@@ -55,7 +126,7 @@ export class DocumentService {
         progressPercent: 0,
         chunkCount: 0,
         pageCount: 0,
-        errorMessage: err?.message || 'Document extraction failed.',
+        errorMessage: msg,
         content: '',
         summary: '',
         keyConcepts: [],
@@ -63,6 +134,17 @@ export class DocumentService {
       };
       await documentRepository.save(failedDoc, auth).catch(() => {});
       throw err;
+    }
+
+    if (extracted.usedOcr) {
+      job = await this.advanceJob(
+        job,
+        'ocr_processing',
+        38,
+        extracted.ocrWarnings.length > 0 ? 'warning' : 'completed',
+        auth,
+        extracted.ocrWarnings.join(' ') || 'OCR text extraction completed'
+      );
     }
 
     // 2. Persist original binary file chunks in document_blobs for download & re-indexing
@@ -82,7 +164,7 @@ export class DocumentService {
       // Non-fatal if binary storage exceeds cap; text chunks & content still persist
     }
 
-    // 3. Initial persistent record in extracting/indexing state
+    // 3. Initial persistent record in extracting/chunking state (never marked ready prematurely)
     const initialDoc: DocumentModel = {
       id: docId,
       userId: auth.userId,
@@ -95,8 +177,8 @@ export class DocumentService {
       fileSize: formatBytes(file.size),
       storageRef,
       blobChunkCount,
-      processingStatus: extracted.usedOcr ? 'ocr_processing' : 'chunking',
-      progressPercent: 45,
+      processingStatus: 'chunking',
+      progressPercent: 48,
       chunkCount: 0,
       pageCount: extracted.pageCount,
       ocrWarnings: extracted.ocrWarnings.join(' '),
@@ -108,7 +190,7 @@ export class DocumentService {
     await documentRepository.save(initialDoc, auth);
 
     // 4. Chunk + Embed + Summarize
-    return this.finalizeIndexingAndSummary(initialDoc, extracted, 0, auth);
+    return this.finalizeIndexingAndSummary(initialDoc, extracted, 0, auth, job);
   }
 
   public async processPastedDocument(
@@ -124,6 +206,8 @@ export class DocumentService {
 
     const extracted = documentExtractorService.extractPlainText(pastedText, 'pasted', 'text/plain');
     const docId = makeSafeId('doc');
+    let job = this.createInitialJob(docId, resolvedNbId, auth, 0);
+    job = await this.advanceJob(job, 'chunking', 48, 'completed', auth, 'Chunking pasted text');
 
     const initialDoc: DocumentModel = {
       id: docId,
@@ -135,7 +219,7 @@ export class DocumentService {
       fileSizeBytes: Buffer.byteLength(pastedText, 'utf-8'),
       fileSize: formatBytes(Buffer.byteLength(pastedText, 'utf-8')),
       processingStatus: 'chunking',
-      progressPercent: 45,
+      progressPercent: 48,
       chunkCount: 0,
       pageCount: 1,
       content: extracted.fullText,
@@ -145,16 +229,28 @@ export class DocumentService {
     };
     await documentRepository.save(initialDoc, auth);
 
-    return this.finalizeIndexingAndSummary(initialDoc, extracted, 0, auth);
+    return this.finalizeIndexingAndSummary(initialDoc, extracted, 0, auth, job);
   }
 
   private async finalizeIndexingAndSummary(
     doc: DocumentModel,
     extracted: DocumentExtractionResult,
     previousChunkCount: number,
-    auth: AuthContext
+    auth: AuthContext,
+    activeJob?: DocumentJobModel
   ) {
+    let job = activeJob || this.createInitialJob(doc.id, doc.notebookId, auth, 0);
+
     try {
+      job = await this.advanceJob(
+        job,
+        'embedding',
+        68,
+        'completed',
+        auth,
+        'Chunking & generating vector embeddings'
+      );
+
       const indexResult = await ragService.indexDocumentUnits(
         doc,
         extracted.units,
@@ -166,6 +262,7 @@ export class DocumentService {
         summary: 'Document indexed for search and chat.',
         keyConcepts: [] as string[],
         flashcards: [] as Array<{ question: string; answer: string; hint?: string }>,
+        coverageNote: '',
       };
 
       const warnings = [...extracted.ocrWarnings];
@@ -173,14 +270,41 @@ export class DocumentService {
         warnings.push(indexResult.degradedWarning);
       }
 
+      job = await this.advanceJob(
+        job,
+        'summarizing',
+        88,
+        indexResult.degradedWarning ? 'warning' : 'completed',
+        auth,
+        `Indexed ${indexResult.chunkCount} chunks (${indexResult.embeddingProvider}:${indexResult.embeddingModel})`
+      );
+
       try {
-        aiResult = await geminiService.summarizeDocument(doc.title, extracted.fullText, auth);
+        const sumOut = await geminiService.summarizeDocument(doc.title, extracted.fullText, auth);
+        aiResult = {
+          summary: sumOut.summary,
+          keyConcepts: sumOut.keyConcepts,
+          flashcards: sumOut.flashcards || [],
+          coverageNote: sumOut.coverage?.coverageNote || '',
+        };
+        if (sumOut.coverage?.truncated) {
+          warnings.push(sumOut.coverage.coverageNote);
+        }
       } catch (sumErr: any) {
         warnings.push(`Summary generation warning: ${sumErr?.message || 'unavailable'}`);
       }
 
-      const finalStatus =
+      const finalStatus: DocumentJobStage =
         warnings.length > 0 ? 'partially_processed' : 'ready';
+
+      job = await this.advanceJob(
+        job,
+        finalStatus,
+        100,
+        warnings.length > 0 ? 'warning' : 'completed',
+        auth,
+        warnings.length > 0 ? warnings.join(' ').slice(0, 300) : 'Document ready for study'
+      );
 
       const updatedDoc = await documentRepository.patch(
         doc.id,
@@ -188,6 +312,7 @@ export class DocumentService {
           processingStatus: finalStatus,
           progressPercent: 100,
           chunkCount: indexResult.chunkCount,
+          embeddingProvider: indexResult.embeddingProvider,
           embeddingModel: indexResult.embeddingModel,
           ocrWarnings: warnings.join(' ').trim(),
           summary: aiResult.summary,
@@ -210,15 +335,18 @@ export class DocumentService {
       return {
         document: updatedDoc,
         flashcards: aiResult.flashcards,
+        job,
       };
     } catch (err: any) {
+      const msg = err?.message || 'Indexing failed';
+      await this.advanceJob(job, 'failed', 0, 'failed', auth, 'Indexing failed', msg);
       await documentRepository
         .patch(
           doc.id,
           {
             processingStatus: 'failed',
             progressPercent: 0,
-            errorMessage: err?.message || 'Indexing failed',
+            errorMessage: msg,
           },
           auth
         )
@@ -234,6 +362,15 @@ export class DocumentService {
   ) {
     const existing = await documentRepository.findById(docId, auth);
     if (!existing) throw new ApiError(404, 'Document not found.', 'NOT_FOUND');
+
+    const prevJob = await documentRepository.getJobByDocumentId(docId, auth);
+    let job = this.createInitialJob(
+      existing.id,
+      existing.notebookId,
+      auth,
+      (prevJob?.retryCount || 0) + 1
+    );
+    job = await this.advanceJob(job, 'extracting', 30, 'completed', auth, 'Replacing file and extracting');
 
     const extracted = await documentExtractorService.extractFromFile(file, auth);
     await documentRepository.deleteBlobsForDocument(existing, auth);
@@ -257,8 +394,8 @@ export class DocumentService {
         storageRef: blobInfo.storageRef,
         blobChunkCount: blobInfo.blobChunkCount,
         pageCount: extracted.pageCount,
-        processingStatus: 'indexing',
-        progressPercent: 50,
+        processingStatus: 'chunking',
+        progressPercent: 48,
         errorMessage: '',
         ocrWarnings: extracted.ocrWarnings.join(' '),
         content: extracted.fullText,
@@ -266,12 +403,21 @@ export class DocumentService {
       auth
     );
 
-    return this.finalizeIndexingAndSummary(patched, extracted, existing.chunkCount || 0, auth);
+    return this.finalizeIndexingAndSummary(patched, extracted, existing.chunkCount || 0, auth, job);
   }
 
   public async reindexDocument(docId: string, auth: AuthContext) {
     const existing = await documentRepository.findById(docId, auth);
     if (!existing) throw new ApiError(404, 'Document not found.', 'NOT_FOUND');
+
+    const prevJob = await documentRepository.getJobByDocumentId(docId, auth);
+    let job = this.createInitialJob(
+      existing.id,
+      existing.notebookId,
+      auth,
+      (prevJob?.retryCount || 0) + 1
+    );
+    job = await this.advanceJob(job, 'extracting', 28, 'completed', auth, 'Re-indexing stored source');
 
     let extracted: DocumentExtractionResult;
     const blob = await documentRepository.getOriginalFileBuffer(existing, auth);
@@ -290,14 +436,23 @@ export class DocumentService {
         existing.mimeType || 'text/plain'
       );
     } else {
+      await this.advanceJob(
+        job,
+        'failed',
+        0,
+        'failed',
+        auth,
+        'No stored source file or text available',
+        'No stored source file or text available to re-index.'
+      );
       throw new ApiError(400, 'No stored source file or text available to re-index.', 'NO_SOURCE');
     }
 
     const patched = await documentRepository.patch(
       existing.id,
       {
-        processingStatus: 'indexing',
-        progressPercent: 50,
+        processingStatus: 'chunking',
+        progressPercent: 48,
         errorMessage: '',
         content: extracted.fullText,
         pageCount: extracted.pageCount,
@@ -305,7 +460,37 @@ export class DocumentService {
       auth
     );
 
-    return this.finalizeIndexingAndSummary(patched, extracted, existing.chunkCount || 0, auth);
+    return this.finalizeIndexingAndSummary(patched, extracted, existing.chunkCount || 0, auth, job);
+  }
+
+  public async getDocumentJob(docId: string, auth: AuthContext) {
+    const job = await documentRepository.getJobByDocumentId(docId, auth);
+    if (job) return job;
+    const doc = await documentRepository.findById(docId, auth);
+    if (!doc) return undefined;
+    return {
+      id: `job-${doc.id}`,
+      userId: auth.userId,
+      documentId: doc.id,
+      notebookId: doc.notebookId,
+      stage:
+        doc.processingStatus === 'failed'
+          ? 'failed'
+          : doc.processingStatus === 'partially_processed'
+          ? 'partially_processed'
+          : 'ready',
+      progressPercent: doc.progressPercent ?? (doc.processingStatus === 'failed' ? 0 : 100),
+      retryCount: 0,
+      stepHistory: [],
+      errorMessage: doc.errorMessage,
+      startedAt: doc.addedAt,
+      updatedAt: doc.updatedAt || doc.addedAt,
+      completedAt: doc.updatedAt || doc.addedAt,
+    } as DocumentJobModel;
+  }
+
+  public async listDocumentJobs(auth: AuthContext) {
+    return documentRepository.listJobsByUser(auth);
   }
 
   public async renameDocument(docId: string, newTitle: string, auth: AuthContext) {
@@ -359,7 +544,6 @@ export class DocumentService {
         }));
     }
 
-    // Fallback substring match on raw content
     const idx = doc.content.toLowerCase().indexOf(q);
     if (idx === -1) return [];
     const start = Math.max(0, idx - 160);
@@ -395,6 +579,7 @@ export class DocumentService {
     const existing = await documentRepository.findById(id, auth);
     if (!existing) return false;
     await chunkRepository.deleteChunksForDocument(existing, auth);
+    await documentRepository.deleteJobForDocument(id, auth);
     return documentRepository.delete(id, auth);
   }
 }

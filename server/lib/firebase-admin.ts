@@ -14,4 +14,17 @@ if (getApps().length === 0) {
 
 export const adminAuth: Auth = getAuth(adminApp);
 export const FIREBASE_APPLET_CONFIG = firebaseConfig;
-export const PRIMARY_ADMIN_EMAIL = 'lakshanrajapaksha327@gmail.com';
+
+export function getConfiguredAdminEmails(): string[] {
+  return String(process.env.ADMIN_EMAILS || '')
+    .split(',')
+    .map((e) => e.trim().toLowerCase())
+    .filter(Boolean);
+}
+
+export function getConfiguredAdminUids(): string[] {
+  return String(process.env.ADMIN_UIDS || '')
+    .split(',')
+    .map((u) => u.trim())
+    .filter(Boolean);
+}

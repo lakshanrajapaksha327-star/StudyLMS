@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import { aiManagerService } from '../ai/ai-manager.service';
+import { firestoreRest } from '../config/firestore_rest';
 import { ApiError, isValidResourceId } from '../middleware/validate.middleware';
 import { aiPromptRepository } from '../repositories/ai_prompt.repository';
 import { advancedLearningRepository } from '../repositories/advanced_learning.repository';
@@ -873,10 +874,46 @@ export class WorkspaceController {
           provider: e.provider || 'gemini',
           modelName: e.modelName,
           errorCategory: e.errorCategory || 'unknown',
-          message: e.response,
+          message: `${e.errorCategory || 'error'} (${e.modelName})`,
           createdAt: e.createdAt,
         })),
         recentEventsCount: logs.length,
+      });
+    } catch (err) {
+      next(err);
+    }
+  }
+
+  public async probeAdminDiagnostics(req: Request, res: Response, next: NextFunction) {
+    try {
+      const auth = getAuthContext(req);
+      const fsStart = Date.now();
+      let firestoreState: 'connection_verified' | 'auth_failure' | 'temporarily_unavailable' =
+        'connection_verified';
+      let firestoreMessage = 'Authenticated Firestore read succeeded.';
+
+      try {
+        await firestoreRest.listAllAdmin('users', auth.idToken, 1);
+      } catch (fsErr: any) {
+        if (fsErr?.statusCode === 401 || fsErr?.statusCode === 403) {
+          firestoreState = 'auth_failure';
+        } else {
+          firestoreState = 'temporarily_unavailable';
+        }
+        firestoreMessage = fsErr?.message || 'Firestore probe failed.';
+      }
+
+      const providers = await aiManagerService.probeProviders();
+      res.json({
+        success: true,
+        checkedAt: new Date().toISOString(),
+        firestore: {
+          state: firestoreState,
+          latencyMs: Date.now() - fsStart,
+          message: firestoreMessage,
+          config: firestoreRest.getConfigInfo(),
+        },
+        providers,
       });
     } catch (err) {
       next(err);

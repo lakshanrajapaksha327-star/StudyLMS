@@ -7,12 +7,18 @@ export class FlashcardController {
   public async generateFlashcards(req: Request, res: Response, next: NextFunction) {
     try {
       const auth = getAuthContext(req);
-      const { topic, sourceContent, cardCount, notebookId, selectedDocumentIds } = req.body;
+      const { topic, sourceContent, sourceMode, cardCount, notebookId, selectedDocumentIds } = req.body;
       const set = await flashcardService.generateAndSave(
-        { topic, sourceContent, cardCount, notebookId, selectedDocumentIds },
+        { topic, sourceContent, sourceMode, cardCount, notebookId, selectedDocumentIds },
         auth
       );
-      res.json({ success: true, cards: set.cards, set });
+      res.json({
+        success: true,
+        cards: set.cards,
+        set,
+        groundingMode: set.groundingMode,
+        sourceCitations: set.sourceCitations || [],
+      });
     } catch (err) {
       next(err);
     }

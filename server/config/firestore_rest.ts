@@ -88,14 +88,28 @@ function toFirestoreFields(data: Record<string, unknown>): Record<string, Firest
 }
 
 async function firestoreFetch(url: string, idToken: string, init: RequestInit = {}) {
-  const resp = await fetch(url, {
-    ...init,
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${idToken}`,
-      ...(init.headers || {}),
-    },
-  });
+  let resp: Response;
+  try {
+    const timeoutSignal = AbortSignal.timeout(25000);
+    const signal = init.signal
+      ? AbortSignal.any([init.signal, timeoutSignal])
+      : timeoutSignal;
+
+    resp = await fetch(url, {
+      ...init,
+      signal,
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${idToken}`,
+        ...(init.headers || {}),
+      },
+    });
+  } catch (err: any) {
+    if (err?.name === 'TimeoutError' || err?.name === 'AbortError') {
+      throw new ApiError(504, 'Database request timed out. Please try again.', 'FIRESTORE_TIMEOUT');
+    }
+    throw err;
+  }
 
   if (!resp.ok) {
     const text = await resp.text();
@@ -204,7 +218,7 @@ export class FirestoreRestClient {
   }
 
   /**
-   * Query collection scoped strictly by userId (single-field index, zero composite index failures)
+   * Query collection scoped strictly by userId using bounded offset pagination
    */
   public async listByUser<T>(
     collection: string,
@@ -212,32 +226,48 @@ export class FirestoreRestClient {
     idToken: string,
     limit = 500
   ): Promise<T[]> {
-    const body = {
-      structuredQuery: {
-        from: [{ collectionId: collection }],
-        where: {
-          fieldFilter: {
-            field: { fieldPath: 'userId' },
-            op: 'EQUAL',
-            value: { stringValue: userId },
-          },
-        },
-        limit,
-      },
-    };
-
-    const rows = await firestoreFetch(`${BASE_URL}:runQuery`, idToken, {
-      method: 'POST',
-      body: JSON.stringify(body),
-    });
-
-    if (!Array.isArray(rows)) return [];
+    const maxTotal = Math.max(1, Math.min(2000, limit));
+    const pageSize = Math.min(250, maxTotal);
     const results: T[] = [];
-    for (const row of rows) {
-      if (row.document) {
-        results.push(fromFirestoreDoc<T>(row.document));
+    let offset = 0;
+
+    while (results.length < maxTotal) {
+      const remaining = maxTotal - results.length;
+      const batchLimit = Math.min(pageSize, remaining);
+      const body = {
+        structuredQuery: {
+          from: [{ collectionId: collection }],
+          where: {
+            fieldFilter: {
+              field: { fieldPath: 'userId' },
+              op: 'EQUAL',
+              value: { stringValue: userId },
+            },
+          },
+          limit: batchLimit,
+          ...(offset > 0 ? { offset } : {}),
+        },
+      };
+
+      const rows = await firestoreFetch(`${BASE_URL}:runQuery`, idToken, {
+        method: 'POST',
+        body: JSON.stringify(body),
+      });
+
+      if (!Array.isArray(rows) || rows.length === 0) break;
+
+      let pageDocs = 0;
+      for (const row of rows) {
+        if (row.document) {
+          results.push(fromFirestoreDoc<T>(row.document));
+          pageDocs++;
+        }
       }
+
+      if (pageDocs < batchLimit) break;
+      offset += pageDocs;
     }
+
     return results;
   }
 

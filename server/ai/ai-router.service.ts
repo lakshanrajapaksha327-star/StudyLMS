@@ -14,13 +14,14 @@ export class AiRouterService {
     adapters: Map<AiProviderId, AiProviderAdapter>,
     taskType: AiTaskType,
     preferredModel?: string,
-    circuitBreaker?: CircuitBreakerService
+    circuitBreaker?: CircuitBreakerService,
+    preferredProvider?: AiProviderId
   ): RouteCandidate[] {
-    const primaryId = modelRegistry.getPrimaryProviderId();
+    const primaryId = preferredProvider || modelRegistry.getPrimaryProviderId();
     const fallbackId = modelRegistry.getFallbackProviderId();
     const allIds: AiProviderId[] = ['gemini', 'openai', 'anthropic'];
 
-    // Ordered preference: configured primary -> configured fallback -> remaining providers
+    // Ordered preference: configured primary (or preferredProvider) -> fallback -> remaining providers
     const orderedIds: AiProviderId[] = [primaryId];
     if (!orderedIds.includes(fallbackId)) orderedIds.push(fallbackId);
     for (const id of allIds) {

@@ -82,6 +82,9 @@ router.delete('/workspace/account', (req, res, next) =>
 router.get('/admin/overview', requireAdmin, (req, res, next) =>
   workspaceController.getAdminOverview(req, res, next)
 );
+router.post('/admin/diagnostics/probe', requireAdmin, (req, res, next) =>
+  workspaceController.probeAdminDiagnostics(req, res, next)
+);
 router.patch('/admin/users/:uid', requireAdmin, (req, res, next) =>
   workspaceController.adminUpdateUser(req, res, next)
 );

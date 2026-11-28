@@ -11,6 +11,9 @@ const QUIZ_SET_KEYS = [
   'difficulty',
   'bestScore',
   'questions',
+  'groundingMode',
+  'sourceDocumentIds',
+  'sourceCitations',
   'createdAt',
   'updatedAt',
 ] as const;

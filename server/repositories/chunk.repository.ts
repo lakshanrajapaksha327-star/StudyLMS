@@ -16,6 +16,7 @@ const CHUNK_ALLOWED_KEYS = [
   'sourceTitle',
   'tokenCount',
   'embedding',
+  'embeddingProvider',
   'embeddingModel',
   'createdAt',
 ] as const;

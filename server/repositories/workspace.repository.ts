@@ -10,7 +10,6 @@ import {
   StudyTaskModel,
   UserProfileDoc,
 } from '../models/workspace.model';
-import { PRIMARY_ADMIN_EMAIL } from '../lib/firebase-admin';
 import { AuthContext, makeSafeId, pickAllowedKeys } from './base.repository';
 
 const USER_KEYS = [
@@ -60,12 +59,10 @@ export class WorkspaceRepository {
     if (existing) return existing;
 
     const now = new Date().toISOString();
-    const isAdmin =
-      (auth.email || '').toLowerCase() === PRIMARY_ADMIN_EMAIL.toLowerCase() &&
-      auth.role === 'Admin';
+    const isAdmin = auth.role === 'Admin';
 
-    // Notice firestore.rules restricts self-create to role in ['Student', 'Educator'] unless already Admin via claim
-    const initialRole: 'Student' | 'Educator' | 'Admin' = isAdmin ? 'Student' : 'Student';
+    // Notice firestore.rules restricts self-create to role in ['Student', 'Educator'] unless already Admin via admins/{uid}
+    const initialRole: 'Student' | 'Educator' | 'Admin' = isAdmin ? 'Admin' : 'Student';
 
     const profile: UserProfileDoc = {
       uid: auth.userId,
@@ -368,6 +365,7 @@ export class WorkspaceRepository {
       'documents',
       'document_chunks',
       'document_blobs',
+      'document_jobs',
       'document_annotations',
       'study_notes',
       'note_versions',

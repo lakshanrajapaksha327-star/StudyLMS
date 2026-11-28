@@ -15,6 +15,14 @@ export interface QuizQuestionModel {
   sourceDocId?: string;
 }
 
+export interface QuizSourceCitationRef {
+  documentId: string;
+  documentTitle: string;
+  chunkId: string;
+  pageNumber?: number;
+  slideNumber?: number;
+}
+
 export interface QuizSetModel {
   id: string;
   userId?: string;
@@ -26,11 +34,15 @@ export interface QuizSetModel {
   createdAt: string;
   updatedAt?: string;
   bestScore?: number;
+  groundingMode?: 'source_grounded' | 'general_knowledge';
+  sourceDocumentIds?: string[];
+  sourceCitations?: QuizSourceCitationRef[];
 }
 
 export interface GenerateQuizRequest {
   topic?: string;
   sourceContent?: string;
+  sourceMode?: 'document' | 'note' | 'topic';
   questionCount?: number;
   difficulty?: 'easy' | 'medium' | 'hard';
   questionFormat?:

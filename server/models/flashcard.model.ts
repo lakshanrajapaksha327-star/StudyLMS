@@ -13,6 +13,14 @@ export interface FlashcardItemModel {
   difficult?: boolean;
 }
 
+export interface FlashcardSourceCitationRef {
+  documentId: string;
+  documentTitle: string;
+  chunkId: string;
+  pageNumber?: number;
+  slideNumber?: number;
+}
+
 export interface FlashcardSetModel {
   id: string;
   userId?: string;
@@ -23,11 +31,15 @@ export interface FlashcardSetModel {
   createdAt: string;
   updatedAt?: string;
   category: string;
+  groundingMode?: 'source_grounded' | 'general_knowledge';
+  sourceDocumentIds?: string[];
+  sourceCitations?: FlashcardSourceCitationRef[];
 }
 
 export interface GenerateFlashcardsRequest {
   topic?: string;
   sourceContent?: string;
+  sourceMode?: 'document' | 'note' | 'topic';
   cardCount?: number;
   notebookId?: string;
   selectedDocumentIds?: string[];
